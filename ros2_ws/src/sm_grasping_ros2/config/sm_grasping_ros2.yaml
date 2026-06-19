@@ -1,0 +1,155 @@
+sm_grasping_inference:
+  ros__parameters:
+    # 입력 ROI PointCloud2입니다.
+    # sm_florence_2_vlm_ros2가 bbox/segmentation으로 잘라낸 객체 포인트만 발행합니다.
+    input_roi_pointcloud_topic: "/sm_florence_2_vlm/roi_pointcloud"
+
+    # grasp 결과 출력 토픽입니다.
+    # candidates/scores/openings는 RViz 마커 및 downstream 제어에서 함께 사용됩니다.
+    output_grasp_candidates_topic: "/sm_grasping/grasp_candidates"
+    output_grasp_scores_topic: "/sm_grasping/grasp_scores"
+    output_grasp_openings_topic: "/sm_grasping/grasp_openings"
+    output_grasp_best_topic: "/sm_grasping/grasp_best"
+    output_grasp_debug_topic: "/sm_grasping/grasp_debug"
+
+    # grasp pose를 target_frame으로 TF 변환할지 결정합니다.
+    # true: RViz/로봇 기준인 base_link에서 grasp pose를 봅니다.
+    # false: ROI pointcloud 원본 프레임(camera_color_optical_frame 등) 기준으로 봅니다.
+    use_tf_transform: true
+    target_frame: "base_link"
+
+    # TF 변환 대기 시간입니다.
+    # 값이 너무 작으면 일시적인 TF 지연에서 실패하고, 너무 크면 추론 루프가 밀릴 수 있습니다.
+    tf_timeout_sec: 0.2
+
+    # grasp 추론 주기 상한입니다.
+    # 입력 pointcloud가 더 빨리 들어와도 이 주기 이상으로는 처리하지 않습니다.
+    inference_rate_hz: 7.0
+
+    # 최대 후보 개수입니다.
+    # 현재 휴리스틱 GPD wrapper는 1개 후보 중심으로 동작하지만, 실 GPD 연동 시 후보 제한으로 사용됩니다.
+    max_candidates: 20
+
+    # 후보 필터링 점수 하한입니다.
+    # 후보가 계속 0개이면 이 값을 낮춰 확인합니다. 현재 임시 wrapper의 score는 0.6입니다.
+    min_grasp_score: 0.2
+
+    # target_frame 기준 작업 공간 제한입니다.
+    # 이 범위를 벗어난 포인트는 grasp 입력에서 제외됩니다.
+    # 마우스/컵이 후보 0개로 나올 때는 실제 ROI 포인트가 이 범위 안에 있는지 먼저 확인하세요.
+    workspace.x_min: -0.5
+    workspace.x_max: 0.8
+    workspace.y_min: -0.6
+    workspace.y_max: 0.6
+    workspace.z_min: 0.0
+    workspace.z_max: 1.5
+
+    # 기본 그리퍼 벌림 폭입니다.
+    # ROI 포인트 분포에서 폭 추정이 가능하면 추정값이 우선이고, 부족하면 이 값이 사용됩니다.
+    gpd_default_opening_m: 0.04
+
+    # 객체 폭 추정값에 더할 여유 폭입니다. (meter)
+    # 실제 제어에서는 객체보다 살짝 크게 열고 닫으면서 잡는 것이 안전합니다.
+    gripper.opening_margin_m: 0.005
+
+    # ROI 포인트의 극단 노이즈를 버리고 폭을 추정할 백분위 범위입니다.
+    # 값 차이를 넓히면 더 크게 열고, 좁히면 노이즈에는 강하지만 작게 열 수 있습니다.
+    gripper.opening_width_percentile_low: 5.0
+    gripper.opening_width_percentile_high: 95.0
+
+    # true이면 후보가 계산한 자세를 무시하고 아래 top_down 쿼터니언을 강제 적용합니다.
+    # 일반적으로 객체 yaw를 따라가야 하므로 false를 권장합니다.
+    gpd_force_top_down_orientation: false
+
+    # gpd_force_top_down_orientation=true일 때 사용할 고정 자세입니다. (xyzw 순서)
+    gpd_top_down_quaternion_xyzw: [0.0, 0.70710678, 0.0, 0.70710678]
+
+    # GPD/휴리스틱이 만든 pose에 곱해지는 보정 쿼터니언입니다. (xyzw 순서)
+    # 좌표계가 이미 맞으면 identity인 [0, 0, 0, 1]을 유지합니다.
+    gpd_to_robot_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+
+    # pointcloud 원본 프레임에서 z 방향으로 더하는 미세 보정입니다.
+    # base_link 기준 높이 보정은 아래 base_offset_xyz_m[2] 사용을 권장합니다.
+    grasp_z_offset_m: 0.0
+
+    # GPD/휴리스틱 pose에 추가로 곱하는 RPY(deg) 보정입니다.
+    # 카메라 프레임 단계의 자세 보정이 필요할 때만 조정합니다.
+    gpd_additional_rpy_deg: [0.0, 0.0, 0.0]
+
+    # target_frame(base_link) 기준 grasp point 위치 보정입니다. [x, y, z] meter
+    # 이 값은 실제 잡을 지점 자체를 이동합니다. 접근 대기 높이(pre-grasp) 용도로 크게 올리지 마세요.
+    base_offset_xyz_m: [0.0, 0.0, 0.0]
+
+    # target_frame(base_link) 기준 툴 자세 보정입니다. [roll, pitch, yaw] degree
+    # 현재 환경에서는 [0, 90, 90]일 때 그리퍼 축 정렬이 맞습니다.
+    base_additional_rpy_deg: [0.0, 90.0, 90.0]
+
+    # true이면 객체가 계산한 roll/pitch는 버리고 yaw 방향만 따라갑니다.
+    # 마우스처럼 평면 위 물체를 집을 때 그리퍼가 뒤집히거나 눕는 현상을 줄입니다.
+    target_frame_yaw_only: true
+
+    # true이면 yaw_only 모드에서도 base_additional_rpy_deg의 roll/pitch 고정 보정을 적용합니다.
+    # 현재 그리퍼 축 정렬에는 [0, 90, 90] 중 roll/pitch 보정이 필요하므로 true를 유지합니다.
+    target_frame_apply_fixed_roll_pitch: true
+
+    # 위치 EMA 필터 강도입니다. 0에 가까울수록 부드럽고, 1에 가까울수록 즉시 따라갑니다.
+    position_ema_alpha: 0.6
+
+    # 자세 EMA 필터 강도입니다. 값이 낮으면 회전 흔들림은 줄지만 반응이 느려집니다.
+    orientation_ema_alpha: 0.5
+
+    # 한 추론 주기에서 best grasp 위치가 움직일 수 있는 최대 거리입니다. (meter)
+    # 튀는 grasp를 막지만, 너무 작으면 객체 변경 시 따라가는 속도가 느립니다.
+    max_translation_step_m: 0.05
+
+    # 유효 grasp 후보로 인정할 그리퍼 벌림 폭 범위입니다. (meter)
+    # 추정 객체 폭이 max_opening_m보다 크면 억지로 clamp하지 않고 grasp 후보를 제거합니다.
+    gripper.min_opening_m: 0.01
+    gripper.max_opening_m: 0.15
+
+sm_gripper_marker:
+  ros__parameters:
+    # marker 노드가 구독하는 grasp 결과 토픽입니다.
+    # 위 sm_grasping_inference 출력 토픽과 반드시 일치해야 합니다.
+    input_grasp_candidates_topic: "/sm_grasping/grasp_candidates"
+    input_grasp_best_topic: "/sm_grasping/grasp_best"
+    input_grasp_openings_topic: "/sm_grasping/grasp_openings"
+
+    # RViz에 표시할 그리퍼 MarkerArray 토픽입니다.
+    output_gripper_markers_topic: "/sm_grasping/gripper_markers"
+
+    # RViz 그리퍼 형상 치수입니다. 실제 로봇 제어에는 직접 영향을 주지 않습니다.
+    gripper.finger_length_m: 0.09
+    gripper.finger_width_m: 0.02
+    gripper.finger_thickness_m: 0.02
+    gripper.palm_width_m: 0.06
+
+    # opening 메시지가 비어 있을 때 RViz 표시용으로 쓰는 기본 벌림 폭입니다.
+    gripper.default_opening_m: 0.05
+
+    # best grasp 마커 색상 RGBA입니다.
+    marker.best_color_rgba: [0.1, 0.9, 0.2, 0.95]
+
+    # 후보 grasp 마커 색상 RGBA입니다.
+    marker.candidate_color_rgba: [0.2, 0.6, 1.0, 0.35]
+
+    # 마커 유지 시간입니다. 짧으면 stale 마커가 빨리 사라지고, 길면 저주기 추론에서 깜빡임이 줄어듭니다.
+    marker.lifetime_sec: 0.5
+
+    # 후보 전체를 표시할지 여부입니다.
+    # false이면 best만 보여 RViz가 깔끔합니다.
+    marker.show_candidates: false
+
+    # true이면 best grasp만 표시합니다.
+    marker.show_best_only: true
+
+    # best grasp 중심점, 즉 그리퍼 손가락 끝 중심(TCP)을 구 형태의 점으로 표시합니다.
+    # RViz에서 실제로 잡아야 하는 목표 위치를 빠르게 확인할 때 사용합니다.
+    marker.show_grasp_point: true
+    marker.grasp_point_radius_m: 0.01
+    marker.grasp_point_color_rgba: [1.0, 0.25, 0.05, 1.0]
+
+    # grasp pose의 로컬 축을 화살표로 표시합니다.
+    marker.show_axes: true
+    marker.axes_length_m: 0.08
+    marker.axes_width_m: 0.006

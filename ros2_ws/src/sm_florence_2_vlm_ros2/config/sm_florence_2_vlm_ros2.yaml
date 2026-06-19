@@ -1,0 +1,60 @@
+sm_florence_2_vlm:
+  ros__parameters:
+    rgb_topic: "/camera/camera/color/image_raw"
+    depth_topic: "/camera/camera/aligned_depth_to_color/image_raw"
+    camera_info_topic: "/camera/camera/color/camera_info"
+    pointcloud_topic: "/camera/camera/depth/color/points"
+
+    target_objects: []
+    target_objects_topic: "/sm_florence_2_vlm/target_objects"
+    use_target_objects_topic: true
+
+    model_id: "microsoft/Florence-2-base"
+    model_cache_dir: "/home/kiro/colcon_ws/src/sm_florence_2_vlm_ros2/models"
+    device: "auto"
+    confidence_threshold: 0.3
+
+    publish_debug_image: true
+    publish_markers: true
+    publish_roi_pointcloud: true
+
+    queue_size: 10
+    sync_slop: 0.05
+
+    depth_scale: 0.001
+    min_depth_m: 0.2
+    max_depth_m: 10.0
+    # 작은/낮은 물체(예: 마우스)에서 배경 depth 혼입을 줄이기 위한 보정값
+    roi_depth_inner_scale: 0.6
+    roi_depth_percentile: 35.0
+    roi_depth_band_m: 0.03
+    # ROI 형상 추출 모드: "bbox" 또는 "depth_segmentation"
+    roi_geometry_mode: "depth_segmentation"
+    roi_geometry_fallback_to_bbox: true
+    roi_depth_segmentation_min_area_px: 10
+    roi_depth_segmentation_kernel_px: 1
+
+    camera_frame: "camera_color_optical_frame"
+    target_frame: "base_link"
+    use_tf_transform: true
+    tf_timeout_sec: 0.2
+
+    object_id_mode: "per_frame"
+
+    inference_rate_hz: 10.0
+    drop_old_frames: true
+    publish_last_detection_when_no_update: false
+
+    # 성능 모드 기본값: 속도 우선
+    num_beams: 1
+    max_new_tokens: 64
+    inference_input_width: 640
+    # 조명 변화에 따른 Florence-2 bbox 흔들림을 줄이기 위한 추론 입력 밝기 보정입니다.
+    # 디버그 이미지 원본에는 적용하지 않고 모델 입력에만 적용합니다.
+    enable_inference_clahe: true
+    clahe_clip_limit: 2.0
+    clahe_tile_grid_size: 8
+    enable_perf_log: true
+    perf_log_interval_sec: 2.0
+    roi_pointcloud_source: "depth"
+    roi_pointcloud_require_organized: true

@@ -1,0 +1,77 @@
+arm_yaw_rho_z_position_controller:
+  ros__parameters:
+    use_sim_time: true
+    arm_base_frame: link0
+    base_frame: chassis_link
+    ee_frame: end_effector_link
+    target_frame: target_in
+    joint_state_topic: /joint_states
+    joint_position_topic: /joint_position_command
+    cmd_topic: /cmd_vel
+    state_topic: /arm_safety_state
+    rate_hz: 40.0
+
+    yaw_error_source: ee
+    joint1_sign: 1.0
+    joint2_sign: 1.0
+    joint3_sign: 1.0
+
+    joint2_rho_per_rad: 0.2715
+    joint2_z_per_rad: -0.1972
+    joint3_rho_per_rad: 0.1521
+    joint3_z_per_rad: -0.2631
+
+    k_yaw: 1.5
+    k_rho: 2.0
+    k_z: 2.5
+    max_yaw_velocity: 0.6
+    max_rho_velocity: 0.22
+    max_z_velocity: 0.22
+    max_joint_velocity: 1.5
+    max_joint2_velocity: 1.0
+    max_joint3_velocity: 1.5
+    max_joint_acceleration: 3.0
+    approach_slowdown_distance: 0.15
+    approach_min_scale: 0.15
+
+    yaw_tolerance: 0.02
+    rho_tolerance: 0.01
+    z_tolerance: 0.01
+    singularity_epsilon: 0.01
+
+    # ARM_TRACK is entered only inside this smaller workspace.
+    safety_enter_rho_min: 0.20
+    safety_enter_rho_max: 0.55
+    safety_enter_z_min: 0.25
+    safety_enter_z_max: 0.78
+    safety_enter_yaw_max: 1.0472
+
+    # Wider exit boundary prevents rapid state switching near the edge.
+    safety_exit_rho_min: 0.15
+    safety_exit_rho_max: 0.65
+    safety_exit_z_min: 0.20
+    safety_exit_z_max: 0.85
+    safety_exit_yaw_max: 1.3090
+
+    home_positions: [0.0, -1.5708, 2.0944, -0.5236, 1.5708, 0.0]
+    home_kp: 2.0
+    home_max_joint_velocity: 1.0
+    home_position_tolerance: 0.03
+
+    base_stop_rho: 0.50
+    switching_rho: 0.55
+    switching_alpha: 20.0
+    arm_switching_rho: 0.75
+    arm_switching_alpha: 10.0
+    arm_blend_exponent: 0.5
+    base_yaw_tolerance: 0.08
+    k_base_yaw: 3.2
+    k_base_linear: 1.2
+    max_base_yaw_rate: 1.4
+    max_base_linear: 0.5
+    enable_base_motion: false
+
+    # Joint safety position limits in radians.
+    # joint1: -40 to 40 deg, joint2: -90 to 70 deg, joint3: -60 to 160 deg.
+    joint_lower_limits: [-0.6981, -1.5708, -1.0472, -3.1416, -3.1416, -3.1416]
+    joint_upper_limits: [0.6981, 1.2217, 2.7925, 3.1416, 3.1416, 3.1416]

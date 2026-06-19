@@ -1,0 +1,68 @@
+wholebody_yaw_rho_z_controller:
+  ros__parameters:
+    base_frame: chassis_link
+    arm_base_frame: link0
+    ee_frame: end_effector_link
+    target_frame: target_out
+    joint_state_topic: /joint_states
+    joint_velocity_topic: /joint_velocity_command
+    cmd_topic: /cmd_vel
+    debug_topic: /wholebody_yaw_rho_z_debug
+    rate_hz: 40.0
+
+    yaw_joint_name: joint1
+    yaw_error_source: ee
+    joint1_sign: 1.0
+    joint2_sign: 1.0
+    joint3_sign: 1.0
+
+    joint2_rho_per_rad: 0.2715
+    joint2_z_per_rad: -0.1972
+    joint3_rho_per_rad: 0.1521
+    joint3_z_per_rad: -0.2631
+
+    switching_rho: 0.55
+    switching_alpha: 10.0
+    switching_mode: workspace
+    workspace_radius: 0.90
+    switching_ratio: 1.0
+    min_switching_rho: 0.10
+    max_switching_rho: 1.00
+    base_stop_rho: 0.35
+    base_yaw_tolerance: 0.08
+
+    k_arm_yaw: 2.2
+    k_rho: 1.8
+    k_z: 3.2
+    k_base_yaw: 3.2
+    k_base_linear: 1.2
+
+    max_arm_yaw_velocity: 0.8
+    max_rho_velocity: 0.10
+    max_z_velocity: 0.12
+    max_joint_velocity: 0.9
+    max_base_yaw_rate: 1.4
+    max_base_linear: 0.5
+
+    yaw_tolerance: 0.03
+    rho_tolerance: 0.04
+    z_tolerance: 0.01
+    singularity_epsilon: 0.01
+    yaw_first: false
+    z_first: false
+    enable_position_hold: true
+    hold_enter_samples: 5
+    hold_exit_yaw_tolerance: 0.06
+    hold_exit_rho_tolerance: 0.06
+    hold_exit_z_tolerance: 0.025
+
+live_yaw_rho_z_monitor:
+  ros__parameters:
+    debug_topic: /wholebody_yaw_rho_z_debug
+    window_sec: 30.0
+    update_ms: 100
+
+wholebody_yaw_rho_z_logger:
+  ros__parameters:
+    debug_topic: /wholebody_yaw_rho_z_debug
+    file_prefix: wholebody_yaw_rho_z
