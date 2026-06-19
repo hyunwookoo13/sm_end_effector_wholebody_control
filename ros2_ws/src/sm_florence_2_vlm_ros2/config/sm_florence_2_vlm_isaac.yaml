@@ -1,0 +1,62 @@
+sm_florence_2_vlm:
+  ros__parameters:
+    rgb_topic: "/arm_cam_rgb"
+    depth_topic: "/arm_cam_depth"
+    camera_info_topic: "/camera_info"
+    pointcloud_topic: "/arm_cam_depth_pcl"
+
+    target_objects: []
+    target_objects_topic: "/sm_florence_2_vlm/target_objects"
+    use_target_objects_topic: true
+
+    model_id: "microsoft/Florence-2-base"
+    model_cache_dir: "/home/kiro/Desktop/src/sm_florence_2_vlm_ros2/models"
+    device: "auto"
+    confidence_threshold: 0.3
+
+    publish_debug_image: true
+    publish_markers: true
+    publish_roi_pointcloud: true
+
+    queue_size: 10
+    sync_slop: 0.1
+
+    # Isaac Sim depth is usually published in meters as 32FC1.
+    # If /depth is 16UC1 in millimeters, change this to 0.001.
+    depth_scale: 1.0
+    min_depth_m: 0.2
+    max_depth_m: 10.0
+
+    roi_depth_inner_scale: 0.6
+    roi_depth_percentile: 35.0
+    roi_depth_band_m: 0.03
+    roi_geometry_mode: "depth_segmentation"
+    roi_geometry_fallback_to_bbox: true
+    roi_depth_segmentation_min_area_px: 10
+    roi_depth_segmentation_kernel_px: 1
+
+    # First Isaac smoke test: keep outputs in the camera frame.
+    # Enable TF after base_link -> camera optical frame is verified.
+    camera_frame: "RSD455_optical_frame"
+    target_frame: "chassis_link"
+    use_tf_transform: true
+    tf_timeout_sec: 0.2
+    tf_use_latest_transform: true
+
+    object_id_mode: "per_frame"
+
+    inference_rate_hz: 5.0
+    drop_old_frames: true
+    publish_last_detection_when_no_update: false
+
+    num_beams: 1
+    max_new_tokens: 64
+    inference_input_width: 640
+    enable_inference_clahe: false
+    clahe_clip_limit: 2.0
+    clahe_tile_grid_size: 8
+    enable_perf_log: true
+    perf_log_interval_sec: 2.0
+
+    roi_pointcloud_source: "depth"
+    roi_pointcloud_require_organized: true
