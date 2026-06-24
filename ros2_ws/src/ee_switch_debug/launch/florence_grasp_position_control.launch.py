@@ -6,6 +6,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -48,7 +49,7 @@ def generate_launch_description():
                 "state_topic": "/arm_safety_state",
                 "offset_x": 0.0,
                 "offset_y": 0.0,
-                "offset_z": LaunchConfiguration("grasp_offset_z"),
+                "offset_z": 0.0,
             }
         ],
     )
@@ -65,6 +66,14 @@ def generate_launch_description():
                 "use_sim_time": True,
                 "target_frame": "grasp_position_target",
                 "enable_base_motion": LaunchConfiguration("enable_base_motion"),
+                "grasp_offset_z": ParameterValue(
+                    LaunchConfiguration("grasp_offset_z"),
+                    value_type=float,
+                ),
+                "grasp_descend_depth": ParameterValue(
+                    LaunchConfiguration("grasp_descend_depth"),
+                    value_type=float,
+                ),
             },
         ],
     )
@@ -103,11 +112,15 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "grasp_offset_z",
-                default_value="0.0",
+                default_value="0.03",
                 description=(
-                    "grasp_best에 더할 Z 오프셋[m]. 최종 접근은 0.0, "
-                    "pre-grasp 접근은 예: 0.08"
+                    "grasp target보다 위에서 먼저 도달할 pre-grasp Z 오프셋[m]."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "grasp_descend_depth",
+                default_value="0.03",
+                description="pre-grasp 도달 후 그리퍼를 닫기 전에 내려갈 Z 거리[m].",
             ),
             DeclareLaunchArgument(
                 "enable_base_motion",

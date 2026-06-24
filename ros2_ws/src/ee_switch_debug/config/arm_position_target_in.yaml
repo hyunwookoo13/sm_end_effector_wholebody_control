@@ -21,22 +21,22 @@ arm_yaw_rho_z_position_controller:
     joint3_rho_per_rad: 0.1521
     joint3_z_per_rad: -0.2631
 
-    k_yaw: 1.5
+    k_yaw: 2.5
     k_rho: 2.0
     k_z: 2.5
-    max_yaw_velocity: 0.6
+    max_yaw_velocity: 0.8
     max_rho_velocity: 0.22
     max_z_velocity: 0.22
     max_joint_velocity: 1.5
     max_joint2_velocity: 1.0
     max_joint3_velocity: 1.5
     max_joint_acceleration: 3.0
-    approach_slowdown_distance: 0.15
-    approach_min_scale: 0.15
+    approach_slowdown_distance: 0.08
+    approach_min_scale: 0.35
 
-    yaw_tolerance: 0.02
-    rho_tolerance: 0.01
-    z_tolerance: 0.01
+    yaw_tolerance: 0.04
+    rho_tolerance: 0.03
+    z_tolerance: 0.03
     singularity_epsilon: 0.01
 
     # ARM_TRACK is entered only inside this smaller workspace.
@@ -75,3 +75,14 @@ arm_yaw_rho_z_position_controller:
     # joint1: -40 to 40 deg, joint2: -90 to 70 deg, joint3: -60 to 160 deg.
     joint_lower_limits: [-0.6981, -1.5708, -1.0472, -3.1416, -3.1416, -3.1416]
     joint_upper_limits: [0.6981, 1.2217, 2.7925, 3.1416, 3.1416, 3.1416]
+
+    # Grasp sequence parameters
+    grasp_descend_speed: 0.3
+    grasp_lift_speed: 0.3
+    grasp_lift_height: 0.12
+    grasp_descend_depth: 0.05
+    grasp_close_duration: 0.1
+    gripper_open_position: 0.0
+    gripper_close_position: 0.8
+    grasp_offset_z: 0.03
+    gripper_joint_names: ["rh_l1", "rh_r1_joint"]

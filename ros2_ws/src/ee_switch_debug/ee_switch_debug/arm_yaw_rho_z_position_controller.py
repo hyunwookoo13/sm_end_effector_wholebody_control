@@ -1,4 +1,4 @@
-from math import atan2, cos, hypot, pi, tanh
+from math import acos, atan2, cos, hypot, pi, sin, tanh
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -17,6 +17,58 @@ def normalize_angle(angle: float) -> float:
     return (angle + pi) % (2.0 * pi) - pi
 
 
+def quaternion_to_matrix(q) -> list[list[float]]:
+    x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
+    norm = (x*x + y*y + z*z + w*w)**0.5
+    if norm > 1e-9:
+        x, y, z, w = x/norm, y/norm, z/norm, w/norm
+    else:
+        x, y, z, w = 0.0, 0.0, 0.0, 1.0
+    return [
+        [1.0 - 2.0*(y*y + z*z), 2.0*(x*y - w*z), 2.0*(x*z + w*y)],
+        [2.0*(x*y + w*z), 1.0 - 2.0*(x*x + z*z), 2.0*(y*z - w*x)],
+        [2.0*(x*z - w*y), 2.0*(y*z + w*x), 1.0 - 2.0*(x*x + y*y)]
+    ]
+
+
+def transpose_matrix(M: list[list[float]]) -> list[list[float]]:
+    return [
+        [M[0][0], M[1][0], M[2][0]],
+        [M[0][1], M[1][1], M[2][1]],
+        [M[0][2], M[1][2], M[2][2]]
+    ]
+
+
+def multiply_matrices(A: list[list[float]], B: list[list[float]]) -> list[list[float]]:
+    C = [[0.0]*3 for _ in range(3)]
+    for i in range(3):
+        for j in range(3):
+            C[i][j] = sum(A[i][k] * B[k][j] for k in range(3))
+    return C
+
+
+def decompose_yzy(R: list[list[float]]) -> tuple[float, float, float]:
+    r11, r12, r13 = R[0][0], R[0][1], R[0][2]
+    r21, r22, r23 = R[1][0], R[1][1], R[1][2]
+    r31, r32, r33 = R[2][0], R[2][1], R[2][2]
+    
+    cos_beta = clamp(r22, -1.0, 1.0)
+    beta = acos(cos_beta)
+    sin_beta = sin(beta)
+    
+    if abs(sin_beta) > 1e-6:
+        alpha = atan2(r32, -r12)
+        gamma = atan2(r23, r21)
+    else:
+        alpha = 0.0
+        if cos_beta > 0.0:
+            gamma = atan2(r13, r11)
+        else:
+            gamma = atan2(-r13, -r11)
+            
+    return alpha, beta, gamma
+
+
 class ArmYawRhoZPositionController(Node):
     def __init__(self) -> None:
         super().__init__("arm_yaw_rho_z_position_controller")
@@ -30,7 +82,7 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("cmd_topic", "/cmd_vel")
         self.declare_parameter("state_topic", "/arm_safety_state")
         self.declare_parameter("rate_hz", 40.0)
-        self.declare_parameter("yaw_error_source", "ee")
+        self.declare_parameter("yaw_error_source", "joint")
         self.declare_parameter("joint1_sign", 1.0)
         self.declare_parameter("joint2_sign", 1.0)
         self.declare_parameter("joint3_sign", 1.0)
@@ -91,11 +143,28 @@ class ArmYawRhoZPositionController(Node):
             "joint_upper_limits",
             [3.1416, 3.1416, 3.1416, 3.1416, 3.1416, 3.1416],
         )
+        self.declare_parameter("k_wrist", 2.0)
+        self.declare_parameter("max_wrist_velocity", 1.0)
+        self.declare_parameter("link1", 0.247)
+        self.declare_parameter("link2", 0.45)
+
+        # Grasp sequence parameters
+        self.declare_parameter("grasp_descend_speed", 0.05)
+        self.declare_parameter("grasp_lift_speed", 0.08)
+        self.declare_parameter("grasp_lift_height", 0.12)
+        self.declare_parameter("grasp_descend_depth", 0.08)
+        self.declare_parameter("grasp_close_duration", 1.0)
+        self.declare_parameter("gripper_open_position", 0.0)
+        self.declare_parameter("gripper_close_position", 0.8)
+        self.declare_parameter("grasp_offset_z", 0.08)
+        self.declare_parameter("gripper_joint_names", ["rh_l1", "rh_r1_joint"])
 
         self.arm_base_frame = str(self.get_parameter("arm_base_frame").value)
         self.base_frame = str(self.get_parameter("base_frame").value)
         self.ee_frame = str(self.get_parameter("ee_frame").value)
         self.target_frame = str(self.get_parameter("target_frame").value)
+        self.link1 = float(self.get_parameter("link1").value)
+        self.link2 = float(self.get_parameter("link2").value)
         joint_state_topic = str(self.get_parameter("joint_state_topic").value)
         joint_position_topic = str(self.get_parameter("joint_position_topic").value)
         cmd_topic = str(self.get_parameter("cmd_topic").value)
@@ -203,14 +272,38 @@ class ArmYawRhoZPositionController(Node):
         )
         self.joint_lower_limits = list(self.get_parameter("joint_lower_limits").value)
         self.joint_upper_limits = list(self.get_parameter("joint_upper_limits").value)
+        self.k_wrist = float(self.get_parameter("k_wrist").value)
+        self.max_wrist_velocity = float(self.get_parameter("max_wrist_velocity").value)
+
+        # Grasp sequence parameters
+        self.grasp_descend_speed = float(self.get_parameter("grasp_descend_speed").value)
+        self.grasp_lift_speed = float(self.get_parameter("grasp_lift_speed").value)
+        self.grasp_lift_height = float(self.get_parameter("grasp_lift_height").value)
+        self.grasp_descend_depth = max(
+            0.0,
+            float(self.get_parameter("grasp_descend_depth").value),
+        )
+        self.grasp_close_duration = float(self.get_parameter("grasp_close_duration").value)
+        self.gripper_open_position = float(self.get_parameter("gripper_open_position").value)
+        self.gripper_close_position = float(self.get_parameter("gripper_close_position").value)
+        self.grasp_offset_z = float(self.get_parameter("grasp_offset_z").value)
+        self.gripper_joint_names = list(self.get_parameter("gripper_joint_names").value)
 
         self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
         self.current_joints: dict[str, float] = {}
         self.position_command: list[float] | None = None
         self.previous_velocity = [0.0] * 6
         self.control_state: str | None = None
+        self.target_received = False
         self.last_update_time = None
         self.last_debug = "waiting for joint states"
+
+        # Grasp sequence state
+        self.grasp_phase = "APPROACH"  # APPROACH, DESCEND, GRASP, LIFT, HOLD
+        self.grasp_z_offset = self.grasp_offset_z  # current dynamic z offset
+        self.grasp_phase_start_time = None
+        self.gripper_position = self.gripper_open_position
+        self.lift_z_accumulated = 0.0
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -266,9 +359,18 @@ class ArmYawRhoZPositionController(Node):
                 rclpy.time.Time(),
                 timeout=Duration(seconds=0.05),
             )
+            link3_transform = self.tf_buffer.lookup_transform(
+                self.arm_base_frame,
+                "link3",
+                rclpy.time.Time(),
+                timeout=Duration(seconds=0.05),
+            )
         except TransformException as exc:
             self.set_control_state("RETURN_HOME")
-            desired_velocity = self.compute_home_velocities()
+            if self.target_received:
+                desired_velocity = self.compute_home_velocities()
+            else:
+                desired_velocity = [0.0] * 6
             limited_velocity = self.limit_acceleration(desired_velocity, dt)
             self.integrate_position_command(limited_velocity, dt)
             self.cmd_pub.publish(Twist())
@@ -276,34 +378,96 @@ class ArmYawRhoZPositionController(Node):
             self.last_debug = f"RETURN_HOME; base stopped; TF lookup failed: {exc}"
             return
 
+        self.target_received = True
         target = target_transform.transform.translation
         ee = ee_transform.transform.translation
+
+        R_target = quaternion_to_matrix(target_transform.transform.rotation)
+        R_ee = quaternion_to_matrix(ee_transform.transform.rotation)
+
+        offset_local = [0.008493, 0.017565, 0.0]
+        # Current wrist center position in link0 frame
+        wc_x = ee.x - (R_ee[0][0]*offset_local[0] + R_ee[0][1]*offset_local[1] + R_ee[0][2]*offset_local[2])
+        wc_y = ee.y - (R_ee[1][0]*offset_local[0] + R_ee[1][1]*offset_local[1] + R_ee[1][2]*offset_local[2])
+        wc_z = ee.z - (R_ee[2][0]*offset_local[0] + R_ee[2][1]*offset_local[1] + R_ee[2][2]*offset_local[2])
+
+        # Target wrist center position in link0 frame
+        wc_target_x = target.x - (R_target[0][0]*offset_local[0] + R_target[0][1]*offset_local[1] + R_target[0][2]*offset_local[2])
+        wc_target_y = target.y - (R_target[1][0]*offset_local[0] + R_target[1][1]*offset_local[1] + R_target[1][2]*offset_local[2])
+        wc_target_z = target.z - (R_target[2][0]*offset_local[0] + R_target[2][1]*offset_local[1] + R_target[2][2]*offset_local[2])
+
+        # Dynamic pre-grasp/descent/lift offset relative to the detected grasp target.
+        wc_target_z = wc_target_z + self.grasp_z_offset
+
         base_target = base_target_transform.transform.translation
-        target_yaw = atan2(target.y, target.x)
-        target_rho = hypot(target.x, target.y)
-        ee_yaw = atan2(ee.y, ee.x)
+        target_yaw = atan2(wc_target_y, wc_target_x)
+        target_rho = hypot(wc_target_x, wc_target_y)
+        ee_yaw = atan2(wc_y, wc_x)
+        
         joint_yaw_error = normalize_angle(
             target_yaw - self.joint1_sign * self.current_joints["joint1"]
         )
         ee_yaw_error = normalize_angle(target_yaw - ee_yaw)
-        yaw_error = (
-            ee_yaw_error
-            if self.yaw_error_source == "ee"
-            else joint_yaw_error
-        )
-        rho_error = target_rho - hypot(ee.x, ee.y)
-        z_error = target.z - ee.z
+        current_rho = hypot(wc_x, wc_y)
+        if self.yaw_error_source == "ee" and current_rho >= 0.25:
+            yaw_error = ee_yaw_error
+        else:
+            yaw_error = joint_yaw_error
+        rho_error = target_rho - hypot(wc_x, wc_y)
+        z_error = wc_target_z - wc_z
 
-        self.update_control_state(target_rho, target.z, target_yaw)
+        self.update_control_state(target_rho, wc_target_z, target_yaw)
+
+        # Check alignment of joints 1, 2, 3
+        pos_aligned = (
+            abs(yaw_error) <= self.yaw_tolerance
+            and abs(rho_error) <= self.rho_tolerance
+            and abs(z_error) <= self.z_tolerance
+        )
+
+        # Simple wrist control: keep joints 4,5 at home, always rotate joint 6 by -90 deg
+        q4_des = self.home_positions[3]
+        q5_des = self.home_positions[4]
+        q6_des = -1.5708  # -90 degrees to orient gripper for grasping
+
+        # ── Grasp sequence state machine ──
+        self._update_grasp_phase(pos_aligned, dt)
+
+        q4_curr = self.current_joints["joint4"]
+        q5_curr = self.current_joints["joint5"]
+        q6_curr = self.current_joints["joint6"]
+        
+        e4 = normalize_angle(q4_des - q4_curr)
+        e5 = normalize_angle(q5_des - q5_curr)
+        e6 = normalize_angle(q6_des - q6_curr)
+        
+        joint4_velocity = clamp(self.k_wrist * e4, -self.max_wrist_velocity, self.max_wrist_velocity)
+        joint5_velocity = clamp(self.k_wrist * e5, -self.max_wrist_velocity, self.max_wrist_velocity)
+        joint6_velocity = clamp(self.k_wrist * e6, -self.max_wrist_velocity, self.max_wrist_velocity)
+        wrist_velocities = [joint4_velocity, joint5_velocity, joint6_velocity]
 
         if self.control_state == "RETURN_HOME":
             home_velocity = self.compute_home_velocities()
+            # Force wrist back to home during RETURN_HOME
+            q4_des = self.home_positions[3]
+            q5_des = self.home_positions[4]
+            q6_des = self.home_positions[5]
+            e4 = normalize_angle(q4_des - q4_curr)
+            e5 = normalize_angle(q5_des - q5_curr)
+            e6 = normalize_angle(q6_des - q6_curr)
+            home_wrist_vels = [
+                clamp(self.k_wrist * e4, -self.max_wrist_velocity, self.max_wrist_velocity),
+                clamp(self.k_wrist * e5, -self.max_wrist_velocity, self.max_wrist_velocity),
+                clamp(self.k_wrist * e6, -self.max_wrist_velocity, self.max_wrist_velocity)
+            ]
             tracking_velocity = self.compute_joint_velocities(
                 yaw_error,
                 rho_error,
                 z_error,
+                self.current_joints["joint2"],
+                self.current_joints["joint3"],
             )
-            tracking_velocity.extend([0.0, 0.0, 0.0])
+            tracking_velocity.extend(home_wrist_vels)
             mu = self.compute_switching(
                 target_rho,
                 self.switching_rho,
@@ -316,7 +480,7 @@ class ArmYawRhoZPositionController(Node):
             )
             arm_blend = (
                 arm_mu ** self.arm_blend_exponent
-                if self.is_transition_target_safe(target.z, target_yaw)
+                if self.is_transition_target_safe(wc_target_z, target_yaw)
                 else 0.0
             )
             desired_velocity = [
@@ -340,7 +504,7 @@ class ArmYawRhoZPositionController(Node):
             )
             self.last_debug = (
                 f"RETURN_HOME target=[rho {target_rho:.3f}, yaw {target_yaw:.3f}, "
-                f"z {target.z:.3f}], home_error={home_error:.3f}, "
+                f"z {wc_target_z:.3f}], home_error={home_error:.3f}, "
                 f"mu={mu:.3f}, arm_mu={arm_mu:.3f}, "
                 f"arm_blend={arm_blend:.3f}, "
                 f"base_scale={base_scale:.3f}, "
@@ -350,19 +514,27 @@ class ArmYawRhoZPositionController(Node):
 
         self.cmd_pub.publish(Twist())
 
-        desired_velocity = self.compute_joint_velocities(yaw_error, rho_error, z_error)
-        desired_velocity.extend([0.0, 0.0, 0.0])
+        desired_velocity = self.compute_joint_velocities(
+            yaw_error,
+            rho_error,
+            z_error,
+            self.current_joints["joint2"],
+            self.current_joints["joint3"],
+        )
+        desired_velocity.extend(wrist_velocities)
         limited_velocity = self.limit_acceleration(desired_velocity, dt)
         self.integrate_position_command(limited_velocity, dt)
 
         self.publish_position_command()
         self.last_debug = (
             f"ARM_TRACK target=[rho {target_rho:.3f}, yaw {target_yaw:.3f}, "
-            f"z {target.z:.3f}], error=[yaw {yaw_error:.3f}, "
+            f"z {wc_target_z:.3f}], error=[yaw {yaw_error:.3f}, "
             f"rho {rho_error:.3f}, z {z_error:.3f}], "
             f"qdot=[{limited_velocity[0]:.3f}, {limited_velocity[1]:.3f}, "
             f"{limited_velocity[2]:.3f}], qcmd=[{self.position_command[0]:.3f}, "
-            f"{self.position_command[1]:.3f}, {self.position_command[2]:.3f}]"
+            f"{self.position_command[1]:.3f}, {self.position_command[2]:.3f}], "
+            f"grasp={self.grasp_phase}, z_off={self.grasp_z_offset:.3f}, "
+            f"grip={self.gripper_position:.2f}"
         )
 
     def update_control_state(
@@ -397,6 +569,8 @@ class ArmYawRhoZPositionController(Node):
         self.previous_velocity = [0.0] * 6
         self.state_pub.publish(String(data=state))
         self.get_logger().warn(f"Control state changed: {previous} -> {state}")
+        if state == "RETURN_HOME":
+            self._reset_grasp_phase()
 
     def compute_home_velocities(self) -> list[float]:
         velocities = []
@@ -486,6 +660,8 @@ class ArmYawRhoZPositionController(Node):
         yaw_error: float,
         rho_error: float,
         z_error: float,
+        q2: float,
+        q3: float,
     ) -> list[float]:
         q1_dot = 0.0
         if abs(yaw_error) > self.yaw_tolerance:
@@ -514,33 +690,39 @@ class ArmYawRhoZPositionController(Node):
             -self.max_z_velocity,
             self.max_z_velocity,
         )
-        determinant = (
-            self.joint2_rho_per_rad * self.joint3_z_per_rad
-            - self.joint3_rho_per_rad * self.joint2_z_per_rad
-        )
+
+        # Dynamic analytical Jacobian
+        q2_phys = q2 * self.joint2_sign
+        q3_phys = q3 * self.joint3_sign
+
+        # Correct row assignment: Row 1 = d_rho (cos), Row 2 = d_z (-sin)
+        j11 = self.link1 * cos(q2_phys) + self.link2 * cos(q2_phys + q3_phys)
+        j12 = self.link2 * cos(q2_phys + q3_phys)
+        j21 = -self.link1 * sin(q2_phys) - self.link2 * sin(q2_phys + q3_phys)
+        j22 = -self.link2 * sin(q2_phys + q3_phys)
+
+        determinant = j11 * j22 - j12 * j21
+
         if abs(determinant) < self.singularity_epsilon:
             return [q1_dot, 0.0, 0.0]
 
-        q2_dot = (
-            self.joint3_z_per_rad * v_rho - self.joint3_rho_per_rad * v_z
-        ) / determinant
-        q3_dot = (
-            -self.joint2_z_per_rad * v_rho + self.joint2_rho_per_rad * v_z
-        ) / determinant
+        q2_dot_phys = (j22 * v_rho - j12 * v_z) / determinant
+        q3_dot_phys = (-j21 * v_rho + j11 * v_z) / determinant
+        
+        q2_dot = q2_dot_phys * self.joint2_sign
+        q3_dot = q3_dot_phys * self.joint3_sign
+
+        # Preserve the joint2/joint3 velocity ratio so the end effector keeps
+        # the requested rho-z direction when either joint reaches its limit.
+        velocity_scale = min(
+            1.0,
+            self.max_joint2_velocity / max(abs(q2_dot), 1e-9),
+            self.max_joint3_velocity / max(abs(q3_dot), 1e-9),
+        )
         return [
             q1_dot,
-            self.joint2_sign
-            * clamp(
-                q2_dot,
-                -self.max_joint2_velocity,
-                self.max_joint2_velocity,
-            ),
-            self.joint3_sign
-            * clamp(
-                q3_dot,
-                -self.max_joint3_velocity,
-                self.max_joint3_velocity,
-            ),
+            q2_dot * velocity_scale,
+            q3_dot * velocity_scale,
         ]
 
     def limit_acceleration(self, desired_velocity: list[float], dt: float) -> list[float]:
@@ -556,9 +738,76 @@ class ArmYawRhoZPositionController(Node):
             return
         msg = JointState()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.name = self.joint_names
-        msg.position = self.position_command
+        msg.name = list(self.joint_names) + self.gripper_joint_names
+        msg.position = list(self.position_command) + [
+            self.gripper_position
+        ] * len(self.gripper_joint_names)
         self.position_pub.publish(msg)
+
+    # ── Grasp sequence logic ──────────────────────────────────────
+    def _update_grasp_phase(self, pos_aligned: bool, dt: float) -> None:
+        """Drive the APPROACH → DESCEND → GRASP → LIFT → HOLD sequence."""
+        if self.grasp_phase == "APPROACH":
+            self.gripper_position = self.gripper_open_position
+            if pos_aligned:
+                self.grasp_phase = "DESCEND"
+                self.grasp_z_offset = self.grasp_offset_z
+                self.get_logger().warn("Grasp phase: APPROACH → DESCEND")
+
+        elif self.grasp_phase == "DESCEND":
+            self.gripper_position = self.gripper_open_position
+            # Gradually reduce the z offset to lower the arm
+            descend_target_offset = self.grasp_offset_z - self.grasp_descend_depth
+            if self.grasp_z_offset > descend_target_offset:
+                self.grasp_z_offset = max(
+                    descend_target_offset,
+                    self.grasp_z_offset - self.grasp_descend_speed * dt,
+                )
+                return
+
+            if pos_aligned:
+                self.grasp_phase = "GRASP"
+                self.grasp_phase_start_time = self.get_clock().now()
+                self.get_logger().warn("Grasp phase: DESCEND → GRASP")
+
+        elif self.grasp_phase == "GRASP":
+            self.gripper_position = self.gripper_close_position
+            elapsed = (
+                self.get_clock().now() - self.grasp_phase_start_time
+            ).nanoseconds * 1e-9
+            if elapsed >= self.grasp_close_duration:
+                self.grasp_phase = "LIFT"
+                self.lift_z_accumulated = 0.0
+                self.get_logger().warn("Grasp phase: GRASP → LIFT")
+
+        elif self.grasp_phase == "LIFT":
+            self.gripper_position = self.gripper_close_position
+            if self.lift_z_accumulated < self.grasp_lift_height:
+                lift_step = min(
+                    self.grasp_lift_speed * dt,
+                    self.grasp_lift_height - self.lift_z_accumulated,
+                )
+                self.grasp_z_offset += lift_step
+                self.lift_z_accumulated += lift_step
+                return
+
+            if pos_aligned:
+                self.grasp_phase = "HOLD"
+                self.get_logger().warn("Grasp phase: LIFT → HOLD")
+
+        elif self.grasp_phase == "HOLD":
+            self.gripper_position = self.gripper_close_position
+
+    def _reset_grasp_phase(self) -> None:
+        """Reset grasp sequence when leaving ARM_TRACK."""
+        if self.grasp_phase != "APPROACH":
+            self.get_logger().warn(
+                f"Grasp phase reset: {self.grasp_phase} → APPROACH"
+            )
+        self.grasp_phase = "APPROACH"
+        self.grasp_z_offset = self.grasp_offset_z
+        self.gripper_position = self.gripper_open_position
+        self.lift_z_accumulated = 0.0
 
     def on_log_timer(self) -> None:
         if self.control_state is not None:
