@@ -81,6 +81,8 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("joint_position_topic", "/joint_position_command")
         self.declare_parameter("cmd_topic", "/cmd_vel")
         self.declare_parameter("state_topic", "/arm_safety_state")
+        self.declare_parameter("task_command_topic", "/arm_task_command")
+        self.declare_parameter("task_state_topic", "/arm_task_state")
         self.declare_parameter("rate_hz", 40.0)
         self.declare_parameter("yaw_error_source", "joint")
         self.declare_parameter("joint1_sign", 1.0)
@@ -157,6 +159,10 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("gripper_open_position", 0.0)
         self.declare_parameter("gripper_close_position", 0.8)
         self.declare_parameter("grasp_offset_z", 0.08)
+        self.declare_parameter("place_offset_z", 0.10)
+        self.declare_parameter("place_descend_depth", 0.08)
+        self.declare_parameter("place_open_duration", 0.5)
+        self.declare_parameter("return_home_after_place", True)
         self.declare_parameter("gripper_joint_names", ["rh_l1", "rh_r1_joint"])
 
         self.arm_base_frame = str(self.get_parameter("arm_base_frame").value)
@@ -169,6 +175,8 @@ class ArmYawRhoZPositionController(Node):
         joint_position_topic = str(self.get_parameter("joint_position_topic").value)
         cmd_topic = str(self.get_parameter("cmd_topic").value)
         state_topic = str(self.get_parameter("state_topic").value)
+        task_command_topic = str(self.get_parameter("task_command_topic").value)
+        task_state_topic = str(self.get_parameter("task_state_topic").value)
         self.rate_hz = float(self.get_parameter("rate_hz").value)
         self.yaw_error_source = str(self.get_parameter("yaw_error_source").value)
         self.joint1_sign = float(self.get_parameter("joint1_sign").value)
@@ -287,6 +295,18 @@ class ArmYawRhoZPositionController(Node):
         self.gripper_open_position = float(self.get_parameter("gripper_open_position").value)
         self.gripper_close_position = float(self.get_parameter("gripper_close_position").value)
         self.grasp_offset_z = float(self.get_parameter("grasp_offset_z").value)
+        self.place_offset_z = float(self.get_parameter("place_offset_z").value)
+        self.place_descend_depth = max(
+            0.0,
+            float(self.get_parameter("place_descend_depth").value),
+        )
+        self.place_open_duration = max(
+            0.0,
+            float(self.get_parameter("place_open_duration").value),
+        )
+        self.return_home_after_place = bool(
+            self.get_parameter("return_home_after_place").value
+        )
         self.gripper_joint_names = list(self.get_parameter("gripper_joint_names").value)
 
         self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
@@ -299,6 +319,8 @@ class ArmYawRhoZPositionController(Node):
         self.last_debug = "waiting for joint states"
 
         # Grasp sequence state
+        self.task_mode = "PICK"
+        self.force_safety_pose = False
         self.grasp_phase = "APPROACH"  # APPROACH, DESCEND, GRASP, LIFT, HOLD
         self.grasp_z_offset = self.grasp_offset_z  # current dynamic z offset
         self.grasp_phase_start_time = None
@@ -308,9 +330,11 @@ class ArmYawRhoZPositionController(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.create_subscription(JointState, joint_state_topic, self.on_joint_state, 10)
+        self.create_subscription(String, task_command_topic, self.on_task_command, 10)
         self.position_pub = self.create_publisher(JointState, joint_position_topic, 10)
         self.cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
         self.state_pub = self.create_publisher(String, state_topic, 10)
+        self.task_state_pub = self.create_publisher(String, task_state_topic, 10)
         self.timer = self.create_timer(max(1.0 / max(self.rate_hz, 0.1), 0.01), self.on_timer)
         self.log_timer = self.create_timer(1.0, self.on_log_timer)
 
@@ -325,6 +349,45 @@ class ArmYawRhoZPositionController(Node):
             self.position_command = [self.current_joints[name] for name in self.joint_names]
             self.last_update_time = self.get_clock().now()
             self.get_logger().info("Position command initialized from current joint states")
+
+    def on_task_command(self, msg: String) -> None:
+        command = msg.data.strip().upper()
+        if command == "PICK":
+            self.start_pick_sequence()
+        elif command == "PLACE":
+            self.start_place_sequence()
+        elif command == "RESET":
+            self.start_pick_sequence()
+            self.set_control_state("RETURN_HOME")
+        else:
+            self.get_logger().warn(f"Unknown arm task command: {msg.data!r}")
+
+    def start_pick_sequence(self) -> None:
+        self.task_mode = "PICK"
+        self.force_safety_pose = False
+        self.grasp_phase = "APPROACH"
+        self.grasp_z_offset = self.grasp_offset_z
+        self.grasp_phase_start_time = None
+        self.gripper_position = self.gripper_open_position
+        self.lift_z_accumulated = 0.0
+        self.previous_velocity = [0.0] * 6
+        self.publish_task_state()
+        self.get_logger().warn("Arm task command: PICK")
+
+    def start_place_sequence(self) -> None:
+        self.task_mode = "PLACE"
+        self.force_safety_pose = False
+        self.grasp_phase = "APPROACH"
+        self.grasp_z_offset = self.place_offset_z
+        self.grasp_phase_start_time = None
+        self.gripper_position = self.gripper_close_position
+        self.lift_z_accumulated = 0.0
+        self.previous_velocity = [0.0] * 6
+        self.publish_task_state()
+        self.get_logger().warn("Arm task command: PLACE")
+
+    def publish_task_state(self) -> None:
+        self.task_state_pub.publish(String(data=f"{self.task_mode}:{self.grasp_phase}"))
 
     def on_timer(self) -> None:
         if self.position_command is None or self.last_update_time is None:
@@ -430,8 +493,9 @@ class ArmYawRhoZPositionController(Node):
         q5_des = self.home_positions[4]
         q6_des = -1.5708  # -90 degrees to orient gripper for grasping
 
-        # ── Grasp sequence state machine ──
-        self._update_grasp_phase(pos_aligned, dt)
+        # ── Pick/place sequence state machine ──
+        self._update_task_phase(pos_aligned, dt)
+        self.publish_task_state()
 
         q4_curr = self.current_joints["joint4"]
         q5_curr = self.current_joints["joint5"]
@@ -448,6 +512,22 @@ class ArmYawRhoZPositionController(Node):
 
         if self.control_state == "RETURN_HOME":
             home_velocity = self.compute_home_velocities()
+            if self.force_safety_pose:
+                limited_velocity = self.limit_acceleration(home_velocity, dt)
+                self.integrate_position_command(limited_velocity, dt)
+                self.cmd_pub.publish(Twist())
+                self.publish_position_command()
+                home_error = max(
+                    abs(self.home_positions[index] - self.current_joints[self.joint_names[index]])
+                    for index in range(6)
+                )
+                self.last_debug = (
+                    f"MISSION_DONE_RETURN_HOME home_error={home_error:.3f}, "
+                    f"qdot=[{limited_velocity[0]:.3f}, {limited_velocity[1]:.3f}, "
+                    f"{limited_velocity[2]:.3f}], base stopped"
+                )
+                return
+
             # Force wrist back to home during RETURN_HOME
             q4_des = self.home_positions[3]
             q5_des = self.home_positions[4]
@@ -533,7 +613,8 @@ class ArmYawRhoZPositionController(Node):
             f"qdot=[{limited_velocity[0]:.3f}, {limited_velocity[1]:.3f}, "
             f"{limited_velocity[2]:.3f}], qcmd=[{self.position_command[0]:.3f}, "
             f"{self.position_command[1]:.3f}, {self.position_command[2]:.3f}], "
-            f"grasp={self.grasp_phase}, z_off={self.grasp_z_offset:.3f}, "
+            f"task={self.task_mode}, phase={self.grasp_phase}, "
+            f"z_off={self.grasp_z_offset:.3f}, "
             f"grip={self.gripper_position:.2f}"
         )
 
@@ -543,6 +624,10 @@ class ArmYawRhoZPositionController(Node):
         target_z: float,
         target_yaw: float,
     ) -> None:
+        if self.force_safety_pose:
+            self.set_control_state("RETURN_HOME")
+            return
+
         inside_enter = (
             self.safety_enter_rho_min <= target_rho <= self.safety_enter_rho_max
             and self.safety_enter_z_min <= target_z <= self.safety_enter_z_max
@@ -569,8 +654,13 @@ class ArmYawRhoZPositionController(Node):
         self.previous_velocity = [0.0] * 6
         self.state_pub.publish(String(data=state))
         self.get_logger().warn(f"Control state changed: {previous} -> {state}")
-        if state == "RETURN_HOME":
-            self._reset_grasp_phase()
+        if state == "RETURN_HOME" and not self.is_holding_object() and not self.force_safety_pose:
+            self._reset_pick_phase()
+
+    def is_holding_object(self) -> bool:
+        if self.task_mode == "PLACE":
+            return self.grasp_phase not in ("HOLD",)
+        return self.grasp_phase in ("GRASP", "LIFT", "HOLD")
 
     def compute_home_velocities(self) -> list[float]:
         velocities = []
@@ -744,9 +834,15 @@ class ArmYawRhoZPositionController(Node):
         ] * len(self.gripper_joint_names)
         self.position_pub.publish(msg)
 
-    # ── Grasp sequence logic ──────────────────────────────────────
-    def _update_grasp_phase(self, pos_aligned: bool, dt: float) -> None:
-        """Drive the APPROACH → DESCEND → GRASP → LIFT → HOLD sequence."""
+    # ── Pick/place sequence logic ─────────────────────────────────
+    def _update_task_phase(self, pos_aligned: bool, dt: float) -> None:
+        if self.task_mode == "PLACE":
+            self._update_place_phase(pos_aligned, dt)
+        else:
+            self._update_pick_phase(pos_aligned, dt)
+
+    def _update_pick_phase(self, pos_aligned: bool, dt: float) -> None:
+        """Drive the pick APPROACH → DESCEND → GRASP → LIFT → HOLD sequence."""
         if self.grasp_phase == "APPROACH":
             self.gripper_position = self.gripper_open_position
             if pos_aligned:
@@ -798,12 +894,71 @@ class ArmYawRhoZPositionController(Node):
         elif self.grasp_phase == "HOLD":
             self.gripper_position = self.gripper_close_position
 
-    def _reset_grasp_phase(self) -> None:
-        """Reset grasp sequence when leaving ARM_TRACK."""
+    def _update_place_phase(self, pos_aligned: bool, dt: float) -> None:
+        """Drive the place APPROACH → DESCEND → RELEASE → RETREAT → HOLD sequence."""
+        if self.grasp_phase == "APPROACH":
+            self.gripper_position = self.gripper_close_position
+            if pos_aligned:
+                self.grasp_phase = "DESCEND"
+                self.grasp_z_offset = self.place_offset_z
+                self.get_logger().warn("Place phase: APPROACH → DESCEND")
+
+        elif self.grasp_phase == "DESCEND":
+            self.gripper_position = self.gripper_close_position
+            release_offset = self.place_offset_z - self.place_descend_depth
+            if self.grasp_z_offset > release_offset:
+                self.grasp_z_offset = max(
+                    release_offset,
+                    self.grasp_z_offset - self.grasp_descend_speed * dt,
+                )
+                return
+
+            if pos_aligned:
+                self.grasp_phase = "RELEASE"
+                self.grasp_phase_start_time = self.get_clock().now()
+                self.get_logger().warn("Place phase: DESCEND → RELEASE")
+
+        elif self.grasp_phase == "RELEASE":
+            self.gripper_position = self.gripper_open_position
+            elapsed = (
+                self.get_clock().now() - self.grasp_phase_start_time
+            ).nanoseconds * 1e-9
+            if elapsed >= self.place_open_duration:
+                if self.return_home_after_place:
+                    self.grasp_phase = "HOLD"
+                    self.force_safety_pose = True
+                    self.set_control_state("RETURN_HOME")
+                    self.get_logger().warn(
+                        "Place phase: RELEASE → HOLD; returning to safety pose"
+                    )
+                    return
+
+                self.grasp_phase = "RETREAT"
+                self.get_logger().warn("Place phase: RELEASE → RETREAT")
+
+        elif self.grasp_phase == "RETREAT":
+            self.gripper_position = self.gripper_open_position
+            if self.grasp_z_offset < self.place_offset_z:
+                self.grasp_z_offset = min(
+                    self.place_offset_z,
+                    self.grasp_z_offset + self.grasp_lift_speed * dt,
+                )
+                return
+
+            if pos_aligned:
+                self.grasp_phase = "HOLD"
+                self.get_logger().warn("Place phase: RETREAT → HOLD")
+
+        elif self.grasp_phase == "HOLD":
+            self.gripper_position = self.gripper_open_position
+
+    def _reset_pick_phase(self) -> None:
+        """Reset pick sequence before an object is held."""
         if self.grasp_phase != "APPROACH":
             self.get_logger().warn(
                 f"Grasp phase reset: {self.grasp_phase} → APPROACH"
             )
+        self.task_mode = "PICK"
         self.grasp_phase = "APPROACH"
         self.grasp_z_offset = self.grasp_offset_z
         self.gripper_position = self.gripper_open_position
