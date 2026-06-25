@@ -1,4 +1,4 @@
-from math import atan2, hypot, pi, sqrt, tanh
+from math import acos, atan2, cos, hypot, pi, sin, sqrt, tanh
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -15,6 +15,58 @@ def clamp(value: float, lower: float, upper: float) -> float:
 
 def normalize_angle(angle: float) -> float:
     return (angle + pi) % (2.0 * pi) - pi
+
+
+def quaternion_to_matrix(q) -> list[list[float]]:
+    x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
+    norm = (x*x + y*y + z*z + w*w)**0.5
+    if norm > 1e-9:
+        x, y, z, w = x/norm, y/norm, z/norm, w/norm
+    else:
+        x, y, z, w = 0.0, 0.0, 0.0, 1.0
+    return [
+        [1.0 - 2.0*(y*y + z*z), 2.0*(x*y - w*z), 2.0*(x*z + w*y)],
+        [2.0*(x*y + w*z), 1.0 - 2.0*(x*x + z*z), 2.0*(y*z - w*x)],
+        [2.0*(x*z - w*y), 2.0*(y*z + w*x), 1.0 - 2.0*(x*x + y*y)]
+    ]
+
+
+def transpose_matrix(M: list[list[float]]) -> list[list[float]]:
+    return [
+        [M[0][0], M[1][0], M[2][0]],
+        [M[0][1], M[1][1], M[2][1]],
+        [M[0][2], M[1][2], M[2][2]]
+    ]
+
+
+def multiply_matrices(A: list[list[float]], B: list[list[float]]) -> list[list[float]]:
+    C = [[0.0]*3 for _ in range(3)]
+    for i in range(3):
+        for j in range(3):
+            C[i][j] = sum(A[i][k] * B[k][j] for k in range(3))
+    return C
+
+
+def decompose_yzy(R: list[list[float]]) -> tuple[float, float, float]:
+    r11, r12, r13 = R[0][0], R[0][1], R[0][2]
+    r21, r22, r23 = R[1][0], R[1][1], R[1][2]
+    r31, r32, r33 = R[2][0], R[2][1], R[2][2]
+
+    cos_beta = clamp(r22, -1.0, 1.0)
+    beta = acos(cos_beta)
+    sin_beta = sin(beta)
+
+    if abs(sin_beta) > 1e-6:
+        alpha = atan2(r32, -r12)
+        gamma = atan2(r23, r21)
+    else:
+        alpha = 0.0
+        if cos_beta > 0.0:
+            gamma = atan2(r13, r11)
+        else:
+            gamma = atan2(-r13, -r11)
+
+    return alpha, beta, gamma
 
 
 class WholeBodyYawRhoZController(Node):
@@ -55,6 +107,10 @@ class WholeBodyYawRhoZController(Node):
         self.declare_parameter("k_z", 1.5)
         self.declare_parameter("k_base_yaw", 2.5)
         self.declare_parameter("k_base_linear", 0.8)
+        self.declare_parameter("k_wrist", 2.0)
+        self.declare_parameter("max_wrist_velocity", 1.0)
+        self.declare_parameter("link1", 0.247)
+        self.declare_parameter("link2", 0.45)
 
         self.declare_parameter("max_arm_yaw_velocity", 0.5)
         self.declare_parameter("max_rho_velocity", 0.04)
@@ -128,8 +184,13 @@ class WholeBodyYawRhoZController(Node):
         self.hold_exit_yaw_tolerance = float(self.get_parameter("hold_exit_yaw_tolerance").value)
         self.hold_exit_rho_tolerance = float(self.get_parameter("hold_exit_rho_tolerance").value)
         self.hold_exit_z_tolerance = float(self.get_parameter("hold_exit_z_tolerance").value)
+        self.k_wrist = float(self.get_parameter("k_wrist").value)
+        self.max_wrist_velocity = float(self.get_parameter("max_wrist_velocity").value)
+        self.link1 = float(self.get_parameter("link1").value)
+        self.link2 = float(self.get_parameter("link2").value)
 
         self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+        self.home_wrist_positions = [-0.5236, 1.5708, 0.0]
         self.current_joints: dict[str, float] = {}
         self.hold_active = False
         self.hold_aligned_count = 0
@@ -184,7 +245,7 @@ class WholeBodyYawRhoZController(Node):
         self.current_joints.update(dict(zip(msg.name, msg.position)))
 
     def on_timer(self) -> None:
-        required_joints = (self.yaw_joint_name, "joint2", "joint3")
+        required_joints = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
         missing = [name for name in required_joints if name not in self.current_joints]
         if missing:
             self.last_debug = f"waiting for joint states: {', '.join(missing)}"
@@ -210,6 +271,12 @@ class WholeBodyYawRhoZController(Node):
                 rclpy.time.Time(),
                 timeout=Duration(seconds=0.05),
             )
+            link3_transform = self.tf_buffer.lookup_transform(
+                self.arm_base_frame,
+                "link3",
+                rclpy.time.Time(),
+                timeout=Duration(seconds=0.05),
+            )
         except TransformException as exc:
             self.last_debug = f"lookup failed: {exc}"
             self.publish_stop()
@@ -219,18 +286,35 @@ class WholeBodyYawRhoZController(Node):
         ee = ee_transform.transform.translation
         base_target = base_target_transform.transform.translation
 
-        arm_target_yaw = atan2(arm_target.y, arm_target.x)
-        ee_yaw = atan2(ee.y, ee.x)
+        R_target = quaternion_to_matrix(arm_target_transform.transform.rotation)
+        R_ee = quaternion_to_matrix(ee_transform.transform.rotation)
+
+        offset_local = [0.008493, 0.017565, 0.0]
+        # Current wrist center position in link0 frame
+        wc_x = ee.x - (R_ee[0][0]*offset_local[0] + R_ee[0][1]*offset_local[1] + R_ee[0][2]*offset_local[2])
+        wc_y = ee.y - (R_ee[1][0]*offset_local[0] + R_ee[1][1]*offset_local[1] + R_ee[1][2]*offset_local[2])
+        wc_z = ee.z - (R_ee[2][0]*offset_local[0] + R_ee[2][1]*offset_local[1] + R_ee[2][2]*offset_local[2])
+
+        # Target wrist center position in link0 frame
+        wc_target_x = arm_target.x - (R_target[0][0]*offset_local[0] + R_target[0][1]*offset_local[1] + R_target[0][2]*offset_local[2])
+        wc_target_y = arm_target.y - (R_target[1][0]*offset_local[0] + R_target[1][1]*offset_local[1] + R_target[1][2]*offset_local[2])
+        wc_target_z = arm_target.z - (R_target[2][0]*offset_local[0] + R_target[2][1]*offset_local[1] + R_target[2][2]*offset_local[2])
+
+        arm_target_yaw = atan2(wc_target_y, wc_target_x)
+        ee_yaw = atan2(wc_y, wc_x)
         joint1 = self.current_joints[self.yaw_joint_name]
         joint_yaw_error = normalize_angle(arm_target_yaw - self.joint1_sign * joint1)
         ee_yaw_error = normalize_angle(arm_target_yaw - ee_yaw)
-        arm_yaw_error = ee_yaw_error if self.yaw_error_source == "ee" else joint_yaw_error
+        if self.yaw_error_source == "ee" and ee_rho >= 0.25:
+            arm_yaw_error = ee_yaw_error
+        else:
+            arm_yaw_error = joint_yaw_error
         yaw_aligned = abs(arm_yaw_error) <= self.yaw_tolerance
 
-        arm_target_rho = hypot(arm_target.x, arm_target.y)
-        ee_rho = hypot(ee.x, ee.y)
-        target_z = arm_target.z
-        ee_z = ee.z
+        arm_target_rho = hypot(wc_target_x, wc_target_y)
+        ee_rho = hypot(wc_x, wc_y)
+        target_z = wc_target_z
+        ee_z = wc_z
         rho_error = arm_target_rho - ee_rho
         z_error = target_z - ee_z
         rho_aligned = abs(rho_error) <= self.rho_tolerance
@@ -241,17 +325,40 @@ class WholeBodyYawRhoZController(Node):
         arm_scale = mu
         base_scale = 0.0 if arm_target_rho <= self.base_stop_rho else 1.0 - mu
 
+        # Simple wrist control: keep joints 4,5 at home, always rotate joint 6 by -90 deg
+        q4_des = self.home_wrist_positions[0]
+        q5_des = self.home_wrist_positions[1]
+        q6_des = -1.5708  # -90 degrees to orient gripper for grasping
+
+        q4_curr = self.current_joints["joint4"]
+        q5_curr = self.current_joints["joint5"]
+        q6_curr = self.current_joints["joint6"]
+
+        e4 = normalize_angle(q4_des - q4_curr)
+        e5 = normalize_angle(q5_des - q5_curr)
+        e6 = normalize_angle(q6_des - q6_curr)
+
+        joint4_velocity = clamp(self.k_wrist * e4, -self.max_wrist_velocity, self.max_wrist_velocity)
+        joint5_velocity = clamp(self.k_wrist * e5, -self.max_wrist_velocity, self.max_wrist_velocity)
+        joint6_velocity = clamp(self.k_wrist * e6, -self.max_wrist_velocity, self.max_wrist_velocity)
+
         self.update_hold_state(aligned, arm_yaw_error, rho_error, z_error)
         if self.hold_active:
             joint1_velocity = 0.0
             joint2_velocity = 0.0
             joint3_velocity = 0.0
+            joint4_velocity = 0.0
+            joint5_velocity = 0.0
+            joint6_velocity = 0.0
             jacobian_det = 0.0
             twist = Twist()
             joint_msg = self.make_joint_command_msg(
                 joint1_velocity,
                 joint2_velocity,
                 joint3_velocity,
+                joint4_velocity,
+                joint5_velocity,
+                joint6_velocity,
                 positions=self.hold_positions,
             )
         else:
@@ -263,9 +370,18 @@ class WholeBodyYawRhoZController(Node):
                 z_aligned,
                 aligned,
                 arm_scale,
+                self.current_joints["joint2"],
+                self.current_joints["joint3"],
             )
             twist = self.compute_base_twist(base_target.x, base_target.y, arm_target_rho, base_scale)
-            joint_msg = self.make_joint_command_msg(joint1_velocity, joint2_velocity, joint3_velocity)
+            joint_msg = self.make_joint_command_msg(
+                joint1_velocity,
+                joint2_velocity,
+                joint3_velocity,
+                joint4_velocity,
+                joint5_velocity,
+                joint6_velocity,
+            )
 
         self.joint_pub.publish(joint_msg)
         self.cmd_pub.publish(twist)
@@ -370,6 +486,8 @@ class WholeBodyYawRhoZController(Node):
         z_aligned: bool,
         aligned: bool,
         arm_scale: float,
+        q2: float,
+        q3: float,
     ) -> tuple[float, float, float]:
         if aligned or (self.yaw_first and not yaw_aligned):
             return 0.0, 0.0, 0.0
@@ -378,7 +496,7 @@ class WholeBodyYawRhoZController(Node):
         v_z = arm_scale * clamp(self.k_z * z_error, -self.max_z_velocity, self.max_z_velocity)
         if self.z_first and not z_aligned:
             v_rho = 0.0
-        return self.solve_joint_velocities(v_rho, v_z)
+        return self.solve_joint_velocities(v_rho, v_z, q2, q3)
 
     def compute_base_twist(self, target_x: float, target_y: float, arm_target_rho: float, base_scale: float) -> Twist:
         twist = Twist()
@@ -401,11 +519,16 @@ class WholeBodyYawRhoZController(Node):
             )
         return twist
 
-    def solve_joint_velocities(self, v_rho: float, v_z: float) -> tuple[float, float, float]:
-        j11 = self.joint2_rho_per_rad
-        j12 = self.joint3_rho_per_rad
-        j21 = self.joint2_z_per_rad
-        j22 = self.joint3_z_per_rad
+    def solve_joint_velocities(self, v_rho: float, v_z: float, q2: float, q3: float) -> tuple[float, float, float]:
+        q2_phys = q2 * self.joint2_sign
+        q3_phys = q3 * self.joint3_sign
+
+        # Correct row assignment: Row 1 = d_rho (cos), Row 2 = d_z (-sin)
+        j11 = self.link1 * cos(q2_phys) + self.link2 * cos(q2_phys + q3_phys)
+        j12 = self.link2 * cos(q2_phys + q3_phys)
+        j21 = -self.link1 * sin(q2_phys) - self.link2 * sin(q2_phys + q3_phys)
+        j22 = -self.link2 * sin(q2_phys + q3_phys)
+
         det = j11 * j22 - j12 * j21
 
         if abs(det) < self.singularity_epsilon:
@@ -415,14 +538,18 @@ class WholeBodyYawRhoZController(Node):
                 self.last_singularity_log_ns = now_ns
             return 0.0, 0.0, det
 
-        q2_dot = (j22 * v_rho - j12 * v_z) / det
-        q3_dot = (-j21 * v_rho + j11 * v_z) / det
+        q2_dot_phys = (j22 * v_rho - j12 * v_z) / det
+        q3_dot_phys = (-j21 * v_rho + j11 * v_z) / det
+
+        q2_dot = q2_dot_phys * self.joint2_sign
+        q3_dot = q3_dot_phys * self.joint3_sign
+
         q2_dot = clamp(q2_dot, -self.max_joint_velocity, self.max_joint_velocity)
         q3_dot = clamp(q3_dot, -self.max_joint_velocity, self.max_joint_velocity)
-        return self.joint2_sign * q2_dot, self.joint3_sign * q3_dot, det
+        return q2_dot, q3_dot, det
 
     def publish_stop(self) -> None:
-        self.joint_pub.publish(self.make_joint_command_msg(0.0, 0.0, 0.0))
+        self.joint_pub.publish(self.make_joint_command_msg(0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
         self.cmd_pub.publish(Twist())
 
     def make_joint_command_msg(
@@ -430,6 +557,9 @@ class WholeBodyYawRhoZController(Node):
         joint1_velocity: float,
         joint2_velocity: float,
         joint3_velocity: float,
+        joint4_velocity: float = 0.0,
+        joint5_velocity: float = 0.0,
+        joint6_velocity: float = 0.0,
         positions: list[float] | None = None,
     ) -> JointState:
         msg = JointState()
@@ -441,9 +571,9 @@ class WholeBodyYawRhoZController(Node):
             joint1_velocity,
             joint2_velocity,
             joint3_velocity,
-            0.0,
-            0.0,
-            0.0,
+            joint4_velocity,
+            joint5_velocity,
+            joint6_velocity,
         ]
         return msg
 

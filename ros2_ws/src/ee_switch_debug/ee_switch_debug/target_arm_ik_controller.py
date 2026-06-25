@@ -1,4 +1,4 @@
-from math import acos, atan2, hypot, sin, tanh
+from math import acos, atan2, cos, hypot, sin, tanh
 
 import rclpy
 from rclpy.duration import Duration
@@ -9,6 +9,58 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 def clamp(value: float, lower: float, upper: float) -> float:
     return max(lower, min(upper, value))
+
+
+def quaternion_to_matrix(q) -> list[list[float]]:
+    x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
+    norm = (x*x + y*y + z*z + w*w)**0.5
+    if norm > 1e-9:
+        x, y, z, w = x/norm, y/norm, z/norm, w/norm
+    else:
+        x, y, z, w = 0.0, 0.0, 0.0, 1.0
+    return [
+        [1.0 - 2.0*(y*y + z*z), 2.0*(x*y - w*z), 2.0*(x*z + w*y)],
+        [2.0*(x*y + w*z), 1.0 - 2.0*(x*x + z*z), 2.0*(y*z - w*x)],
+        [2.0*(x*z - w*y), 2.0*(y*z + w*x), 1.0 - 2.0*(x*x + y*y)]
+    ]
+
+
+def transpose_matrix(M: list[list[float]]) -> list[list[float]]:
+    return [
+        [M[0][0], M[1][0], M[2][0]],
+        [M[0][1], M[1][1], M[2][1]],
+        [M[0][2], M[1][2], M[2][2]]
+    ]
+
+
+def multiply_matrices(A: list[list[float]], B: list[list[float]]) -> list[list[float]]:
+    C = [[0.0]*3 for _ in range(3)]
+    for i in range(3):
+        for j in range(3):
+            C[i][j] = sum(A[i][k] * B[k][j] for k in range(3))
+    return C
+
+
+def decompose_yzy(R: list[list[float]]) -> tuple[float, float, float]:
+    r11, r12, r13 = R[0][0], R[0][1], R[0][2]
+    r21, r22, r23 = R[1][0], R[1][1], R[1][2]
+    r31, r32, r33 = R[2][0], R[2][1], R[2][2]
+
+    cos_beta = clamp(r22, -1.0, 1.0)
+    beta = acos(cos_beta)
+    sin_beta = sin(beta)
+
+    if abs(sin_beta) > 1e-6:
+        alpha = atan2(r32, -r12)
+        gamma = atan2(r23, r21)
+    else:
+        alpha = 0.0
+        if cos_beta > 0.0:
+            gamma = atan2(r13, r11)
+        else:
+            gamma = atan2(-r13, -r11)
+
+    return alpha, beta, gamma
 
 
 class TargetArmIkController(Node):
@@ -54,7 +106,16 @@ class TargetArmIkController(Node):
         self.joint_kp = float(self.get_parameter("joint_kp").value)
         self.max_joint_step = float(self.get_parameter("max_joint_step").value)
         self.ee_stop_distance = float(self.get_parameter("ee_stop_distance").value)
+
+        self.declare_parameter("yaw_tolerance", 0.02)
+        self.declare_parameter("rho_tolerance", 0.01)
+        self.declare_parameter("z_tolerance", 0.01)
+        self.yaw_tolerance = float(self.get_parameter("yaw_tolerance").value)
+        self.rho_tolerance = float(self.get_parameter("rho_tolerance").value)
+        self.z_tolerance = float(self.get_parameter("z_tolerance").value)
+
         self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
+        self.home_wrist_positions = [-0.5236, 1.5708, 0.0]
         self.current_joints: dict[str, float] = {}
 
         self.tf_buffer = Buffer()
@@ -88,6 +149,12 @@ class TargetArmIkController(Node):
                 rclpy.time.Time(),
                 timeout=Duration(seconds=0.05),
             )
+            link3_transform = self.tf_buffer.lookup_transform(
+                self.base_frame,
+                "link3",
+                rclpy.time.Time(),
+                timeout=Duration(seconds=0.05),
+            )
         except TransformException as exc:
             self.last_debug = f"lookup failed: {exc}"
             return
@@ -99,23 +166,57 @@ class TargetArmIkController(Node):
 
         t = target_transform.transform.translation
         ee = ee_transform.transform.translation
+
+        R_target = quaternion_to_matrix(target_transform.transform.rotation)
+        R_ee = quaternion_to_matrix(ee_transform.transform.rotation)
+
+        offset_local = [0.008493, 0.017565, 0.0]
+        # Current wrist center position in link0 frame
+        wc_x = ee.x - (R_ee[0][0]*offset_local[0] + R_ee[0][1]*offset_local[1] + R_ee[0][2]*offset_local[2])
+        wc_y = ee.y - (R_ee[1][0]*offset_local[0] + R_ee[1][1]*offset_local[1] + R_ee[1][2]*offset_local[2])
+        wc_z = ee.z - (R_ee[2][0]*offset_local[0] + R_ee[2][1]*offset_local[1] + R_ee[2][2]*offset_local[2])
+
+        # Target wrist center position in link0 frame
+        wc_target_x = t.x - (R_target[0][0]*offset_local[0] + R_target[0][1]*offset_local[1] + R_target[0][2]*offset_local[2])
+        wc_target_y = t.y - (R_target[1][0]*offset_local[0] + R_target[1][1]*offset_local[1] + R_target[1][2]*offset_local[2])
+        wc_target_z = t.z - (R_target[2][0]*offset_local[0] + R_target[2][1]*offset_local[1] + R_target[2][2]*offset_local[2])
+
         ee_error = ((t.x - ee.x) ** 2 + (t.y - ee.y) ** 2 + (t.z - ee.z) ** 2) ** 0.5
-        rho_t = hypot(t.x, t.y)
+        rho_t = hypot(wc_target_x, wc_target_y)
         mu = 0.5 * (1.0 - tanh(self.alpha * (rho_t - self.switching_point)))
         weight = mu if self.scale_by_mu else 1.0
 
-        yaw = atan2(t.y, t.x)
-        z = t.z - self.shoulder_z
+        yaw = atan2(wc_target_y, wc_target_x)
+        z = wc_target_z - self.shoulder_z
         rho = clamp(rho_t, self.min_reach, self.link1 + self.link2 - 1e-3)
 
         q2, q3 = self.solve_planar_2link(rho, z)
         q1 = self.joint1_sign * yaw
         q2 = self.joint2_sign * q2
         q3 = self.joint3_sign * q3
+
+        # Check alignment of joints 1, 2, 3 using the decoupled errors
+        yaw_err = normalize_angle(yaw - self.joint1_sign * self.current_joints["joint1"])
+        rho_err = rho_t - hypot(wc_x, wc_y)
+        z_err = wc_target_z - wc_z
+        pos_aligned = (
+            abs(yaw_err) <= self.yaw_tolerance
+            and abs(rho_err) <= self.rho_tolerance
+            and abs(z_err) <= self.z_tolerance
+        )
+
+        # Simple wrist control: keep joints 4,5 at home, always rotate joint 6 by -90 deg
+        q4_des = self.home_wrist_positions[0]
+        q5_des = self.home_wrist_positions[1]
+        q6_des = -1.5708  # -90 degrees to orient gripper for grasping
+
         ik_target = {
             "joint1": q1,
             "joint2": q2,
             "joint3": q3,
+            "joint4": q4_des,
+            "joint5": q5_des,
+            "joint6": q6_des,
         }
 
         if ee_error <= self.ee_stop_distance:

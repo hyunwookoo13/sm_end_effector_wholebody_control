@@ -40,34 +40,67 @@ class GpdWrapper:
         return self._load_error
 
     def infer(self, points_xyz: np.ndarray, max_candidates: int, lims: list[float]) -> list[GraspCandidate]:
-        """ROI 포인트클라우드에서 grasp 후보를 생성한다.
-
-        TODO:
-        - GPD ROS 인터페이스(/detect_grasps 결과) 연동
-        - 또는 GPD 라이브러리 직접 연동
-        """
         if points_xyz.size == 0:
             return []
 
-        # 현재 단계에서는 중단 없는 통합 검증을 위해 중심점 기반 후보를 생성한다.
         if not self._warned:
-            self.logger.warn("GPD 실연동 전 단계입니다. 현재는 중심점 기반 임시 grasp를 생성합니다.")
+            self.logger.warn("GPD 미사용: 캔/원통형 물체용 휴리스틱 grasp를 생성합니다.")
             self._warned = True
 
-        centroid = np.mean(points_xyz, axis=0)
-        # ROI 포인트의 평면 분포(PCA)로 장축 방향을 추정하고,
-        # 장축+90도(단축 파지)로 yaw를 설정한다.
-        raw_yaw = self._estimate_yaw_from_points(points_xyz)
-        yaw = raw_yaw + (np.pi * 0.5)
+        points = points_xyz.astype(float)
+
+        # 1. 중심점
+        centroid = np.mean(points, axis=0)
+
+        # 2. XY 평면 PCA로 물체 장축 추정
+        xy = points[:, :2]
+        xy_centered = xy - np.mean(xy, axis=0, keepdims=True)
+
+        if points.shape[0] >= 5:
+            cov = np.cov(xy_centered, rowvar=False)
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            major_axis = eigvecs[:, int(np.argmax(eigvals))]
+        else:
+            major_axis = np.array([1.0, 0.0], dtype=float)
+
+        major_axis = major_axis / (np.linalg.norm(major_axis) + 1e-9)
+
+        # 3. 캔 장축에 수직인 방향
+        closing_axis = np.array([-major_axis[1], major_axis[0]], dtype=float)
+        closing_axis = closing_axis / (np.linalg.norm(closing_axis) + 1e-9)
+
+        # 4. 로봇 base 쪽에서 접근하도록 방향 선택
+        # target_frame이 base_link/chassis_link 기준이라고 가정하면,
+        # centroid xy 벡터는 로봇에서 물체로 향하는 방향
+        robot_to_obj = centroid[:2]
+        if np.linalg.norm(robot_to_obj) > 1e-6:
+            robot_to_obj = robot_to_obj / np.linalg.norm(robot_to_obj)
+
+            # closing_axis가 로봇에서 물체 쪽으로 너무 반대면 뒤집기
+            if np.dot(closing_axis, robot_to_obj) < 0.0:
+                closing_axis = -closing_axis
+
+        # 5. grasp yaw
+        # gripper local X축이 접근 방향이라고 보고 yaw를 잡음
+        yaw = float(np.arctan2(closing_axis[1], closing_axis[0]))
         yaw = self._stabilize_yaw(yaw)
         q = self._yaw_to_quat_xyzw(yaw)
-        # 임시 휴리스틱 단계에서는 절대 z 거리로 점수를 깎지 않는다.
-        # (테이블 높이가 큰 환경에서 작은 물체가 min_grasp_score에 걸리는 문제 방지)
-        score = 0.6
+
+        # 6. target 위치 보정
+        # 중심점 그대로가 아니라 로봇 쪽/접근 방향으로 살짝 당김
+        approach_backoff = 0.03  # 3cm, 필요하면 0.02~0.06 조절
+        target = centroid.copy()
+        target[0] -= closing_axis[0] * approach_backoff
+        target[1] -= closing_axis[1] * approach_backoff
+
+        # 너무 낮게 찍히면 테이블/물체 표면에 박을 수 있어서 살짝 위로
+        target[2] += 0.015
+
+        score = 0.7
 
         return [
             GraspCandidate(
-                translation=np.array([centroid[0], centroid[1], centroid[2]], dtype=float),
+                translation=np.array([target[0], target[1], target[2]], dtype=float),
                 quaternion_xyzw=q,
                 score=score,
                 opening_width_m=self.default_opening_m,

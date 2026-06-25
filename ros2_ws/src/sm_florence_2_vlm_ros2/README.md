@@ -38,7 +38,7 @@ python3 -m pip install --break-system-packages \
   torch==2.11.0 \
   --index-url https://pypi.jetson-ai-lab.io/sbsa/cu130
 python3 -m pip install --break-system-packages \
-  transformers==4.49.0 numpy==1.26.4 opencv-python<4.12 Pillow einops
+  transformers==4.49.0 numpy==1.26.4 opencv-python<4.12 Pillow einops timm torchvision
 ```
 
 `transformers 5.x`에서는 Florence-2 remote code와 호환성 문제가 발생할 수 있으므로 `transformers==4.49.0` 고정을 권장합니다.

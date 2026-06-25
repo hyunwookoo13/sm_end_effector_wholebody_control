@@ -7,7 +7,7 @@ from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformL
 
 
 class GraspTargetTfBridge(Node):
-    """Publish a position-only wholebody target from the best grasp pose."""
+    """Publish the best grasp pose in the whole-body control frame."""
 
     def __init__(self) -> None:
         super().__init__("grasp_target_tf_bridge")
@@ -78,6 +78,7 @@ class GraspTargetTfBridge(Node):
 
         if source_frame == self.parent_frame:
             target_point = source_point
+            target_rotation = self.normalize_quaternion(msg.pose.orientation)
         else:
             try:
                 parent_from_source = self.tf_buffer.lookup_transform(
@@ -100,6 +101,12 @@ class GraspTargetTfBridge(Node):
                 rotated_point[1] + float(translation.y),
                 rotated_point[2] + float(translation.z),
             )
+            target_rotation = self.normalize_quaternion(
+                self.multiply_quaternions(
+                    parent_from_source.transform.rotation,
+                    msg.pose.orientation,
+                )
+            )
 
         transform = TransformStamped()
         transform.header.frame_id = self.parent_frame
@@ -107,7 +114,10 @@ class GraspTargetTfBridge(Node):
         transform.transform.translation.x = target_point[0]
         transform.transform.translation.y = target_point[1]
         transform.transform.translation.z = target_point[2]
-        transform.transform.rotation.w = 1.0
+        transform.transform.rotation.x = target_rotation[0]
+        transform.transform.rotation.y = target_rotation[1]
+        transform.transform.rotation.z = target_rotation[2]
+        transform.transform.rotation.w = target_rotation[3]
 
         self.latest_transform = transform
         self.latest_update_time = self.get_clock().now()
@@ -169,6 +179,38 @@ class GraspTargetTfBridge(Node):
             y + qw * ty + qz * tx - qx * tz,
             z + qw * tz + qx * ty - qy * tx,
         )
+
+    @staticmethod
+    def multiply_quaternions(left, right):
+        lx = float(left.x)
+        ly = float(left.y)
+        lz = float(left.z)
+        lw = float(left.w)
+        rx = float(right.x)
+        ry = float(right.y)
+        rz = float(right.z)
+        rw = float(right.w)
+        return (
+            lw * rx + lx * rw + ly * rz - lz * ry,
+            lw * ry - lx * rz + ly * rw + lz * rx,
+            lw * rz + lx * ry - ly * rx + lz * rw,
+            lw * rw - lx * rx - ly * ry - lz * rz,
+        )
+
+    @staticmethod
+    def normalize_quaternion(quaternion):
+        if isinstance(quaternion, tuple):
+            x, y, z, w = quaternion
+        else:
+            x = float(quaternion.x)
+            y = float(quaternion.y)
+            z = float(quaternion.z)
+            w = float(quaternion.w)
+
+        norm = (x * x + y * y + z * z + w * w) ** 0.5
+        if norm < 1e-9:
+            return (0.0, 0.0, 0.0, 1.0)
+        return (x / norm, y / norm, z / norm, w / norm)
 
     def on_log_timer(self) -> None:
         self.get_logger().info(self.last_debug)
