@@ -58,6 +58,7 @@ class PickPlaceTaskManager(Node):
         self.declare_parameter("task_topic", "/pick_place_task")
         self.declare_parameter("target_objects_topic", "/sm_florence_2_vlm/target_objects")
         self.declare_parameter("detections_topic", "/sm_florence_2_vlm/detections")
+        self.declare_parameter("place_detections_topic", "")
         self.declare_parameter("grasp_topic", "/sm_grasping/grasp_best")
         self.declare_parameter("arm_task_command_topic", "/arm_task_command")
         self.declare_parameter("arm_task_state_topic", "/arm_task_state")
@@ -81,6 +82,10 @@ class PickPlaceTaskManager(Node):
         self.task_topic = str(self.get_parameter("task_topic").value)
         self.target_objects_topic = str(self.get_parameter("target_objects_topic").value)
         self.detections_topic = str(self.get_parameter("detections_topic").value)
+        self.place_detections_topic = (
+            str(self.get_parameter("place_detections_topic").value).strip()
+            or self.detections_topic
+        )
         self.grasp_topic = str(self.get_parameter("grasp_topic").value)
         self.arm_task_command_topic = str(self.get_parameter("arm_task_command_topic").value)
         self.arm_task_state_topic = str(self.get_parameter("arm_task_state_topic").value)
@@ -122,7 +127,7 @@ class PickPlaceTaskManager(Node):
 
         self.create_subscription(String, self.task_topic, self.on_task_command, 10)
         self.create_subscription(PoseStamped, self.grasp_topic, self.on_grasp_best, 10)
-        self.create_subscription(String, self.detections_topic, self.on_detections, 10)
+        self.create_subscription(String, self.place_detections_topic, self.on_detections, 10)
         self.create_subscription(String, self.arm_task_state_topic, self.on_arm_task_state, 10)
         self.target_objects_pub = self.create_publisher(String, self.target_objects_topic, 10)
         self.arm_task_command_pub = self.create_publisher(String, self.arm_task_command_topic, 10)
@@ -135,7 +140,7 @@ class PickPlaceTaskManager(Node):
 
         self.get_logger().info(
             f"Pick/place manager target={self.target_frame}, parent={self.parent_frame}, "
-            f"task_topic={self.task_topic}"
+            f"task_topic={self.task_topic}, place_detections={self.place_detections_topic}"
         )
 
     def on_task_command(self, msg: String) -> None:

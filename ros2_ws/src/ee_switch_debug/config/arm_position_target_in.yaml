@@ -66,10 +66,11 @@ arm_yaw_rho_z_position_controller:
     arm_blend_exponent: 0.5
     base_yaw_tolerance: 0.08
     k_base_yaw: 3.2
-    k_base_linear: 1.2
-    max_base_yaw_rate: 1.4
-    max_base_linear: 0.5
+    k_base_linear: 2.4
+    max_base_yaw_rate: 2.8
+    max_base_linear: 1.0
     enable_base_motion: false
+    hold_wrist_during_place: true
 
     # Joint safety position limits in radians.
     # joint1: -40 to 40 deg, joint2: -90 to 70 deg, joint3: -60 to 160 deg.
@@ -86,7 +87,7 @@ arm_yaw_rho_z_position_controller:
     gripper_close_position: 0.8
     grasp_offset_z: 0.03
     place_offset_z: 0.10
-    place_descend_depth: 0.01
-    place_open_duration: 0.5
+    place_descend_depth: 0.04
+    place_open_duration: 0.8
     return_home_after_place: true
     gripper_joint_names: ["rh_l1", "rh_r1_joint"]

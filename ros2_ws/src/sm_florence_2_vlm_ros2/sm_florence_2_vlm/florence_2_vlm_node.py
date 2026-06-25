@@ -724,10 +724,10 @@ class Florence2VLMNode(Node):
         self.roi_filter = PointCloudROIFilter(self.get_logger())
         self.visualizer = DetectionVisualizer()
 
-        self.detection_pub = self.create_publisher(String, "/sm_florence_2_vlm/detections", 10)
-        self.debug_pub = self.create_publisher(Image, "/sm_florence_2_vlm/debug/image", 10)
-        self.marker_pub = self.create_publisher(MarkerArray, "/sm_florence_2_vlm/markers", 10)
-        self.roi_cloud_pub = self.create_publisher(PointCloud2, "/sm_florence_2_vlm/roi_pointcloud", 10)
+        self.detection_pub = self.create_publisher(String, self.detections_topic, 10)
+        self.debug_pub = self.create_publisher(Image, self.debug_image_topic, 10)
+        self.marker_pub = self.create_publisher(MarkerArray, self.markers_topic, 10)
+        self.roi_cloud_pub = self.create_publisher(PointCloud2, self.roi_pointcloud_topic, 10)
 
         self._setup_subscribers()
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
@@ -746,6 +746,10 @@ class Florence2VLMNode(Node):
         self.declare_parameter("target_objects", ["person", "chair", "box"])
         self.declare_parameter("target_objects_topic", "/sm_florence_2_vlm/target_objects")
         self.declare_parameter("use_target_objects_topic", True)
+        self.declare_parameter("detections_topic", "/sm_florence_2_vlm/detections")
+        self.declare_parameter("debug_image_topic", "/sm_florence_2_vlm/debug/image")
+        self.declare_parameter("markers_topic", "/sm_florence_2_vlm/markers")
+        self.declare_parameter("roi_pointcloud_topic", "/sm_florence_2_vlm/roi_pointcloud")
         self.declare_parameter("model_id", "microsoft/Florence-2-base")
         self.declare_parameter("model_cache_dir", "/home/kiro/colcon_ws/src/sm_florence_2_vlm_ros2/models")
         self.declare_parameter("device", "auto")
@@ -793,6 +797,10 @@ class Florence2VLMNode(Node):
         self.target_objects = self._safe_get_target_objects()
         self.target_objects_topic = self.get_parameter("target_objects_topic").value
         self.use_target_objects_topic = bool(self.get_parameter("use_target_objects_topic").value)
+        self.detections_topic = self.get_parameter("detections_topic").value
+        self.debug_image_topic = self.get_parameter("debug_image_topic").value
+        self.markers_topic = self.get_parameter("markers_topic").value
+        self.roi_pointcloud_topic = self.get_parameter("roi_pointcloud_topic").value
         self.model_id = self.get_parameter("model_id").value
         self.model_cache_dir = self.get_parameter("model_cache_dir").value
         self.device = self.get_parameter("device").value

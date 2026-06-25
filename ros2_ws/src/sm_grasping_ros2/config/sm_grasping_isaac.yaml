@@ -37,7 +37,7 @@ sm_grasping_inference:
     grasp_z_offset_m: 0.0
     gpd_additional_rpy_deg: [0.0, 0.0, 0.0]
 
-    base_offset_xyz_m: [0.0, 0.0, 0.0]
+    base_offset_xyz_m: [0.02, 0.0, -0.035]
     base_additional_rpy_deg: [0.0, 90.0, 90.0]
     target_frame_yaw_only: true
     target_frame_apply_fixed_roll_pitch: true

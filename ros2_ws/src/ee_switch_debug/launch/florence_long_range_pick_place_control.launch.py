@@ -13,7 +13,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     grasping_share = get_package_share_directory("sm_grasping_ros2")
 
-    perception_launch = IncludeLaunchDescription(
+    pick_perception_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
                 grasping_share,
@@ -22,10 +22,33 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
-            "florence_config_file": LaunchConfiguration("florence_config_file"),
+            "florence_config_file": LaunchConfiguration("pick_florence_config_file"),
             "grasping_config_file": LaunchConfiguration("grasping_config_file"),
             "publish_fixed_camera_tf": LaunchConfiguration("publish_fixed_camera_tf"),
         }.items(),
+    )
+
+    place_florence_node = Node(
+        package="sm_florence_2_vlm_ros2",
+        executable="sm_florence_2_vlm_node",
+        name="sm_florence_2_vlm_place",
+        output="screen",
+        emulate_tty=True,
+        parameters=[
+            LaunchConfiguration("place_florence_config_file"),
+            {
+                "use_sim_time": True,
+                "rgb_topic": "/rsd455/rgb2",
+                "depth_topic": "/rsd455/depth2",
+                "camera_info_topic": "/rsd455/camera_info2",
+                "target_objects_topic": "/sm_florence_2_vlm/target_objects",
+                "detections_topic": LaunchConfiguration("place_detections_topic"),
+                "debug_image_topic": "/sm_florence_2_vlm_place/debug/image",
+                "markers_topic": "/sm_florence_2_vlm_place/markers",
+                "roi_pointcloud_topic": "/sm_florence_2_vlm_place/roi_pointcloud",
+                "camera_frame": LaunchConfiguration("place_camera_frame"),
+            },
+        ],
     )
 
     task_manager = Node(
@@ -45,6 +68,7 @@ def generate_launch_description():
                     LaunchConfiguration("autostart"),
                     value_type=bool,
                 ),
+                "place_detections_topic": LaunchConfiguration("place_detections_topic"),
                 "place_offset_x": ParameterValue(
                     LaunchConfiguration("place_offset_x"),
                     value_type=float,
@@ -119,12 +143,22 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "florence_config_file",
+                "pick_florence_config_file",
                 default_value=PathJoinSubstitution(
                     [
                         FindPackageShare("sm_florence_2_vlm_ros2"),
                         "config",
                         "sm_florence_2_vlm_rsd455.yaml",
+                    ]
+                ),
+            ),
+            DeclareLaunchArgument(
+                "place_florence_config_file",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("sm_florence_2_vlm_ros2"),
+                        "config",
+                        "sm_florence_2_vlm_rsd455_place.yaml",
                     ]
                 ),
             ),
@@ -149,15 +183,17 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("pick_object", default_value="can"),
-            DeclareLaunchArgument("place_object", default_value="dish"),
+            DeclareLaunchArgument("place_object", default_value="box"),
             DeclareLaunchArgument("autostart", default_value="true"),
-            DeclareLaunchArgument("enable_base_motion", default_value="false"),
+            DeclareLaunchArgument("enable_base_motion", default_value="true"),
             DeclareLaunchArgument("publish_fixed_camera_tf", default_value="false"),
             DeclareLaunchArgument("target_parent_frame", default_value="odom"),
+            DeclareLaunchArgument("place_camera_frame", default_value="rsd455_color_optical_frame2"),
+            DeclareLaunchArgument("place_detections_topic", default_value="/sm_florence_2_vlm_place/detections"),
             DeclareLaunchArgument("grasp_offset_z", default_value="0.03"),
             DeclareLaunchArgument("grasp_descend_depth", default_value="0.07"),
             DeclareLaunchArgument("place_offset_z", default_value="0.10"),
-            DeclareLaunchArgument("place_descend_depth", default_value="0.01"),
+            DeclareLaunchArgument("place_descend_depth", default_value="0.03"),
             DeclareLaunchArgument("place_open_duration", default_value="0.8"),
             DeclareLaunchArgument("return_home_after_place", default_value="true"),
             DeclareLaunchArgument("place_offset_x", default_value="0.0"),
@@ -166,7 +202,8 @@ def generate_launch_description():
             DeclareLaunchArgument("task_manager_rate_hz", default_value="30.0"),
             DeclareLaunchArgument("target_objects_publish_period", default_value="1.0"),
             DeclareLaunchArgument("task_manager_tf_timeout_sec", default_value="0.1"),
-            perception_launch,
+            pick_perception_launch,
+            place_florence_node,
             task_manager,
             controller,
         ]

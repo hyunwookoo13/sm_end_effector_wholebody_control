@@ -92,18 +92,18 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("joint2_z_per_rad", -0.1972)
         self.declare_parameter("joint3_rho_per_rad", 0.1521)
         self.declare_parameter("joint3_z_per_rad", -0.2631)
-        self.declare_parameter("k_yaw", 1.5)
-        self.declare_parameter("k_rho", 1.0)
-        self.declare_parameter("k_z", 1.5)
-        self.declare_parameter("max_yaw_velocity", 0.5)
-        self.declare_parameter("max_rho_velocity", 0.04)
-        self.declare_parameter("max_z_velocity", 0.04)
-        self.declare_parameter("max_joint_velocity", 0.4)
-        self.declare_parameter("max_joint2_velocity", 0.4)
-        self.declare_parameter("max_joint3_velocity", 0.4)
-        self.declare_parameter("max_joint_acceleration", 0.8)
-        self.declare_parameter("approach_slowdown_distance", 0.15)
-        self.declare_parameter("approach_min_scale", 0.15)
+        self.declare_parameter("k_yaw", 2.5)
+        self.declare_parameter("k_rho", 2.0)
+        self.declare_parameter("k_z", 2.5)
+        self.declare_parameter("max_yaw_velocity", 0.8)
+        self.declare_parameter("max_rho_velocity", 0.22)
+        self.declare_parameter("max_z_velocity", 0.22)
+        self.declare_parameter("max_joint_velocity", 1.5)
+        self.declare_parameter("max_joint2_velocity", 1.0)
+        self.declare_parameter("max_joint3_velocity", 1.5)
+        self.declare_parameter("max_joint_acceleration", 3.0)
+        self.declare_parameter("approach_slowdown_distance", 0.08)
+        self.declare_parameter("approach_min_scale", 0.35)
         self.declare_parameter("yaw_tolerance", 0.03)
         self.declare_parameter("rho_tolerance", 0.04)
         self.declare_parameter("z_tolerance", 0.04)
@@ -132,10 +132,10 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("arm_switching_alpha", 10.0)
         self.declare_parameter("arm_blend_exponent", 1.0)
         self.declare_parameter("base_yaw_tolerance", 0.08)
-        self.declare_parameter("k_base_yaw", 2.0)
-        self.declare_parameter("k_base_linear", 0.8)
-        self.declare_parameter("max_base_yaw_rate", 0.6)
-        self.declare_parameter("max_base_linear", 0.20)
+        self.declare_parameter("k_base_yaw", 3.2)
+        self.declare_parameter("k_base_linear", 1.2)
+        self.declare_parameter("max_base_yaw_rate", 1.4)
+        self.declare_parameter("max_base_linear", 0.5)
         self.declare_parameter("enable_base_motion", False)
         self.declare_parameter(
             "joint_lower_limits",
@@ -147,21 +147,22 @@ class ArmYawRhoZPositionController(Node):
         )
         self.declare_parameter("k_wrist", 2.0)
         self.declare_parameter("max_wrist_velocity", 1.0)
+        self.declare_parameter("hold_wrist_during_place", True)
         self.declare_parameter("link1", 0.247)
         self.declare_parameter("link2", 0.45)
 
         # Grasp sequence parameters
-        self.declare_parameter("grasp_descend_speed", 0.05)
-        self.declare_parameter("grasp_lift_speed", 0.08)
+        self.declare_parameter("grasp_descend_speed", 0.3)
+        self.declare_parameter("grasp_lift_speed", 0.3)
         self.declare_parameter("grasp_lift_height", 0.12)
         self.declare_parameter("grasp_descend_depth", 0.08)
-        self.declare_parameter("grasp_close_duration", 1.0)
+        self.declare_parameter("grasp_close_duration", 0.1)
         self.declare_parameter("gripper_open_position", 0.0)
         self.declare_parameter("gripper_close_position", 0.8)
         self.declare_parameter("grasp_offset_z", 0.08)
         self.declare_parameter("place_offset_z", 0.10)
         self.declare_parameter("place_descend_depth", 0.08)
-        self.declare_parameter("place_open_duration", 0.5)
+        self.declare_parameter("place_open_duration", 0.8)
         self.declare_parameter("return_home_after_place", True)
         self.declare_parameter("gripper_joint_names", ["rh_l1", "rh_r1_joint"])
 
@@ -282,6 +283,9 @@ class ArmYawRhoZPositionController(Node):
         self.joint_upper_limits = list(self.get_parameter("joint_upper_limits").value)
         self.k_wrist = float(self.get_parameter("k_wrist").value)
         self.max_wrist_velocity = float(self.get_parameter("max_wrist_velocity").value)
+        self.hold_wrist_during_place = bool(
+            self.get_parameter("hold_wrist_during_place").value
+        )
 
         # Grasp sequence parameters
         self.grasp_descend_speed = float(self.get_parameter("grasp_descend_speed").value)
@@ -326,6 +330,7 @@ class ArmYawRhoZPositionController(Node):
         self.grasp_phase_start_time = None
         self.gripper_position = self.gripper_open_position
         self.lift_z_accumulated = 0.0
+        self.place_wrist_hold_positions: list[float] | None = None
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -365,6 +370,7 @@ class ArmYawRhoZPositionController(Node):
     def start_pick_sequence(self) -> None:
         self.task_mode = "PICK"
         self.force_safety_pose = False
+        self.place_wrist_hold_positions = None
         self.grasp_phase = "APPROACH"
         self.grasp_z_offset = self.grasp_offset_z
         self.grasp_phase_start_time = None
@@ -377,6 +383,9 @@ class ArmYawRhoZPositionController(Node):
     def start_place_sequence(self) -> None:
         self.task_mode = "PLACE"
         self.force_safety_pose = False
+        self.place_wrist_hold_positions = self.capture_current_wrist_positions()
+        if self.position_command is not None and self.place_wrist_hold_positions is not None:
+            self.position_command[3:6] = self.place_wrist_hold_positions
         self.grasp_phase = "APPROACH"
         self.grasp_z_offset = self.place_offset_z
         self.grasp_phase_start_time = None
@@ -385,6 +394,14 @@ class ArmYawRhoZPositionController(Node):
         self.previous_velocity = [0.0] * 6
         self.publish_task_state()
         self.get_logger().warn("Arm task command: PLACE")
+
+    def capture_current_wrist_positions(self) -> list[float] | None:
+        wrist_names = self.joint_names[3:6]
+        if all(name in self.current_joints for name in wrist_names):
+            return [self.current_joints[name] for name in wrist_names]
+        if self.position_command is not None:
+            return list(self.position_command[3:6])
+        return None
 
     def publish_task_state(self) -> None:
         self.task_state_pub.publish(String(data=f"{self.task_mode}:{self.grasp_phase}"))
@@ -488,18 +505,35 @@ class ArmYawRhoZPositionController(Node):
             and abs(z_error) <= self.z_tolerance
         )
 
-        # Simple wrist control: keep joints 4,5 at home, always rotate joint 6 by -90 deg
+        q4_curr = self.current_joints["joint4"]
+        q5_curr = self.current_joints["joint5"]
+        q6_curr = self.current_joints["joint6"]
+
+        if (
+            self.task_mode == "PLACE"
+            and self.hold_wrist_during_place
+            and not self.force_safety_pose
+            and self.place_wrist_hold_positions is None
+        ):
+            self.place_wrist_hold_positions = [q4_curr, q5_curr, q6_curr]
+            self.position_command[3:6] = self.place_wrist_hold_positions
+
+        # Keep the wrist stable while carrying/releasing the object.
         q4_des = self.home_positions[3]
         q5_des = self.home_positions[4]
         q6_des = -1.5708  # -90 degrees to orient gripper for grasping
+        if (
+            self.task_mode == "PLACE"
+            and self.hold_wrist_during_place
+            and not self.force_safety_pose
+            and self.grasp_phase in ("APPROACH", "DESCEND", "RELEASE", "RETREAT")
+            and self.place_wrist_hold_positions is not None
+        ):
+            q4_des, q5_des, q6_des = self.place_wrist_hold_positions
 
         # ── Pick/place sequence state machine ──
         self._update_task_phase(pos_aligned, dt)
         self.publish_task_state()
-
-        q4_curr = self.current_joints["joint4"]
-        q5_curr = self.current_joints["joint5"]
-        q6_curr = self.current_joints["joint6"]
         
         e4 = normalize_angle(q4_des - q4_curr)
         e5 = normalize_angle(q5_des - q5_curr)
@@ -919,20 +953,20 @@ class ArmYawRhoZPositionController(Node):
                 self.get_logger().warn("Place phase: DESCEND → RELEASE")
 
         elif self.grasp_phase == "RELEASE":
-            self.gripper_position = self.gripper_open_position
             elapsed = (
                 self.get_clock().now() - self.grasp_phase_start_time
             ).nanoseconds * 1e-9
+            open_ratio = clamp(
+                elapsed / max(self.place_open_duration, 1e-3),
+                0.0,
+                1.0,
+            )
+            self.gripper_position = (
+                self.gripper_close_position
+                + (self.gripper_open_position - self.gripper_close_position) * open_ratio
+            )
             if elapsed >= self.place_open_duration:
-                if self.return_home_after_place:
-                    self.grasp_phase = "HOLD"
-                    self.force_safety_pose = True
-                    self.set_control_state("RETURN_HOME")
-                    self.get_logger().warn(
-                        "Place phase: RELEASE → HOLD; returning to safety pose"
-                    )
-                    return
-
+                self.gripper_position = self.gripper_open_position
                 self.grasp_phase = "RETREAT"
                 self.get_logger().warn("Place phase: RELEASE → RETREAT")
 
@@ -947,6 +981,13 @@ class ArmYawRhoZPositionController(Node):
 
             if pos_aligned:
                 self.grasp_phase = "HOLD"
+                if self.return_home_after_place:
+                    self.force_safety_pose = True
+                    self.set_control_state("RETURN_HOME")
+                    self.get_logger().warn(
+                        "Place phase: RETREAT → HOLD; returning to safety pose"
+                    )
+                    return
                 self.get_logger().warn("Place phase: RETREAT → HOLD")
 
         elif self.grasp_phase == "HOLD":
