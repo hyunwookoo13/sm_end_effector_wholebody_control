@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -93,6 +94,39 @@ def generate_launch_description():
                     LaunchConfiguration("task_manager_tf_timeout_sec"),
                     value_type=float,
                 ),
+            }
+        ],
+    )
+
+    natural_language_task_parser = Node(
+        package="ee_switch_debug",
+        executable="natural_language_task_parser",
+        name="natural_language_task_parser",
+        output="screen",
+        emulate_tty=True,
+        condition=IfCondition(LaunchConfiguration("enable_natural_language_task_parser")),
+        parameters=[
+            {
+                "use_sim_time": True,
+                "natural_language_topic": LaunchConfiguration("natural_language_task_topic"),
+                "task_topic": "/pick_place_task",
+                "ollama_url": LaunchConfiguration("ollama_url"),
+                "model": LaunchConfiguration("local_llm_model"),
+                "use_ollama": ParameterValue(
+                    LaunchConfiguration("use_local_llm"),
+                    value_type=bool,
+                ),
+                "use_rule_fallback": True,
+                "allowed_objects": [
+                    "can",
+                    "blue can",
+                    "red can",
+                    "box",
+                    "dish",
+                    "apple",
+                    "bottle",
+                    "mug",
+                ],
             }
         ],
     )
@@ -202,9 +236,15 @@ def generate_launch_description():
             DeclareLaunchArgument("task_manager_rate_hz", default_value="30.0"),
             DeclareLaunchArgument("target_objects_publish_period", default_value="1.0"),
             DeclareLaunchArgument("task_manager_tf_timeout_sec", default_value="0.1"),
+            DeclareLaunchArgument("enable_natural_language_task_parser", default_value="true"),
+            DeclareLaunchArgument("natural_language_task_topic", default_value="/natural_language_task"),
+            DeclareLaunchArgument("use_local_llm", default_value="true"),
+            DeclareLaunchArgument("local_llm_model", default_value="gemma3:1b"),
+            DeclareLaunchArgument("ollama_url", default_value="http://127.0.0.1:11434/api/chat"),
             pick_perception_launch,
             place_florence_node,
             task_manager,
+            natural_language_task_parser,
             controller,
         ]
     )

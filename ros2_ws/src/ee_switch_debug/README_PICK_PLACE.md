@@ -65,3 +65,56 @@ Place tuning:
 place_descend_depth:=0.02..0.04
 place_open_duration:=0.8
 ```
+
+## Natural Language Task Input
+
+Install Ollama and pull the local parser model:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull gemma3:1b
+```
+
+Run the long-range launch in wait-for-command mode:
+
+```bash
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py autostart:=false
+```
+
+Option 1: send a natural-language command directly:
+
+```bash
+ros2 topic pub --once /natural_language_task std_msgs/msg/String "{data: '캔을 집어서 박스에 넣어줘'}"
+```
+
+Option 2: run the interactive input console in another terminal:
+
+```bash
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run ee_switch_debug natural_language_task_console
+```
+
+Then type a command and press Enter:
+
+```text
+캔을 집어서 박스에 넣어줘
+```
+
+Color-qualified cans are also supported when Florence can visually detect them:
+
+```text
+파란 캔을 집어서 박스에 넣어줘
+빨간 캔을 집어서 박스에 넣어줘
+blue can | red can
+```
+
+The parser publishes validated JSON to `/pick_place_task`, for example:
+
+```json
+{"pick": "can", "place": "box"}
+```
