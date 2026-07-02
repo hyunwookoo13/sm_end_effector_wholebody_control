@@ -20,7 +20,7 @@ sm_florence_2_vlm_place:
 
     publish_debug_image: true
     publish_markers: true
-    publish_roi_pointcloud: false
+    publish_roi_pointcloud: true
 
     queue_size: 10
     sync_slop: 0.05

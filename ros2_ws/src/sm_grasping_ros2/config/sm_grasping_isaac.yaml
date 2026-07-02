@@ -53,6 +53,8 @@ sm_gripper_marker:
     input_grasp_openings_topic: "/sm_grasping/grasp_openings"
 
     output_gripper_markers_topic: "/sm_grasping/gripper_markers"
+    output_frame: "odom"
+    tf_timeout_sec: 0.05
 
     gripper.finger_length_m: 0.09
     gripper.finger_width_m: 0.02
