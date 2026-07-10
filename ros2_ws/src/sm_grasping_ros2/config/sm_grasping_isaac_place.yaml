@@ -24,6 +24,7 @@ sm_grasping_inference_place:
     workspace.z_max: 1.8
 
     gpd_default_opening_m: 0.04
+    heuristic_lateral_backoff_m: 0.0
     gripper.opening_margin_m: 0.005
     gripper.opening_width_percentile_low: 5.0
     gripper.opening_width_percentile_high: 95.0
@@ -36,7 +37,8 @@ sm_grasping_inference_place:
     grasp_z_offset_m: 0.0
     gpd_additional_rpy_deg: [0.0, 0.0, 0.0]
 
-    base_offset_xyz_m: [0.02, 0.0, -0.035]
+    base_offset_xyz_m: [0.0, 0.0, -0.035]
+    grasp_target_radial_offset_m: 0.04
     base_additional_rpy_deg: [0.0, 90.0, 90.0]
     target_frame_yaw_only: true
     target_frame_apply_fixed_roll_pitch: true

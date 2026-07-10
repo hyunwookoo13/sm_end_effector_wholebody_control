@@ -73,6 +73,11 @@ arm_yaw_rho_z_position_controller:
     hold_wrist_during_place: true
     grasp_orientation_wrist_mode: link6
     grasp_link6_orientation_offset: 0.0
+    grasp_link6_axis: "y"
+    grasp_gripper_closing_axis: "x"
+    grasp_target_closing_axis: "y"
+    require_wrist_alignment_before_descend: true
+    wrist_orientation_tolerance: 0.12
 
     # Joint safety position limits in radians.
     # joint1: -40 to 40 deg, joint2: -90 to 70 deg, joint3: -60 to 160 deg.
@@ -84,6 +89,7 @@ arm_yaw_rho_z_position_controller:
     grasp_lift_speed: 0.3
     grasp_lift_height: 0.12
     grasp_descend_depth: 0.07
+    grasp_approach_clearance_z: 0.03
     grasp_close_duration: 0.1
     gripper_open_position: 0.0
     gripper_close_position: 0.8

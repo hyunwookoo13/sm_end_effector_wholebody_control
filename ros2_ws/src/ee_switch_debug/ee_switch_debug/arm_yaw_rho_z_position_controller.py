@@ -17,6 +17,13 @@ def normalize_angle(angle: float) -> float:
     return (angle + pi) % (2.0 * pi) - pi
 
 
+def pick_z_offsets(grasp_offset_z: float, descend_depth: float, approach_clearance_z: float) -> tuple[float, float]:
+    """Return the pre-grasp and final descend offsets for a pick."""
+    return (
+        float(grasp_offset_z) + max(0.0, float(approach_clearance_z)),
+        float(grasp_offset_z) - max(0.0, float(descend_depth)),
+    )
+
 def quaternion_to_matrix(q) -> list[list[float]]:
     x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
     norm = (x*x + y*y + z*z + w*w)**0.5
@@ -45,6 +52,65 @@ def multiply_matrices(A: list[list[float]], B: list[list[float]]) -> list[list[f
         for j in range(3):
             C[i][j] = sum(A[i][k] * B[k][j] for k in range(3))
     return C
+
+
+def axis_vector(axis_name: str) -> tuple[float, float, float] | None:
+    normalized = str(axis_name).strip().lower()
+    sign = -1.0 if normalized.startswith("-") else 1.0
+    name = normalized[1:] if normalized.startswith(("+", "-")) else normalized
+    axis = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}.get(name)
+    return None if axis is None else tuple(sign * value for value in axis)
+
+
+def transform_vector(rotation, vector):
+    return tuple(sum(float(rotation[row][column]) * vector[column] for column in range(3)) for row in range(3))
+
+
+def dot_vectors(a, b):
+    return sum(a[index] * b[index] for index in range(3))
+
+
+def cross_vectors(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def normalized_vector(vector, epsilon: float = 1e-8):
+    norm = dot_vectors(vector, vector) ** 0.5
+    return None if norm <= epsilon else tuple(component / norm for component in vector)
+
+
+def project_axis_onto_rotation_plane(vector, rotation_axis):
+    axis = normalized_vector(rotation_axis)
+    if axis is None:
+        return None
+    parallel_scale = dot_vectors(vector, axis)
+    return normalized_vector(tuple(vector[index] - parallel_scale * axis[index] for index in range(3)))
+
+
+def compute_link6_axis_target(target_rotation, ee_rotation, current_q6, lower_limit, upper_limit, link6_axis="y", gripper_closing_axis="x", target_closing_axis="y", link6_offset=0.0):
+    local_joint_axis = axis_vector(link6_axis)
+    local_gripper_axis = axis_vector(gripper_closing_axis)
+    local_target_axis = axis_vector(target_closing_axis)
+    if local_joint_axis is None or local_gripper_axis is None or local_target_axis is None:
+        return clamp(float(current_q6), lower_limit, upper_limit), 0.0, False
+    joint_axis = normalized_vector(transform_vector(ee_rotation, local_joint_axis))
+    if joint_axis is None:
+        return clamp(float(current_q6), lower_limit, upper_limit), 0.0, False
+    current_closing = project_axis_onto_rotation_plane(transform_vector(ee_rotation, local_gripper_axis), joint_axis)
+    desired_closing = project_axis_onto_rotation_plane(transform_vector(target_rotation, local_target_axis), joint_axis)
+    if current_closing is None or desired_closing is None:
+        return clamp(float(current_q6), lower_limit, upper_limit), 0.0, False
+    delta = atan2(dot_vectors(joint_axis, cross_vectors(current_closing, desired_closing)), clamp(dot_vectors(current_closing, desired_closing), -1.0, 1.0))
+    if delta > pi / 2.0:
+        delta -= pi
+    elif delta < -pi / 2.0:
+        delta += pi
+    base_target = float(current_q6) + delta + float(link6_offset)
+    candidates = [base_target + multiple * pi for multiple in range(-4, 5) if lower_limit - 1e-9 <= base_target + multiple * pi <= upper_limit + 1e-9]
+    if candidates:
+        target = min(candidates, key=lambda candidate: abs(candidate - float(current_q6)))
+        return clamp(target, lower_limit, upper_limit), delta, True
+    return clamp(base_target, lower_limit, upper_limit), delta, False
 
 
 def decompose_yzy(R: list[list[float]]) -> tuple[float, float, float]:
@@ -96,6 +162,14 @@ def compute_wrist_targets_from_orientation(
         clamp(targets[index], joint_lower_limits[index + 3], joint_upper_limits[index + 3])
         for index in range(3)
     ]
+
+
+def is_wrist_aligned_for_phase(task_mode, grasp_phase, wrist_errors, tolerance, require_alignment, orientation_valid=True):
+    if not require_alignment or str(task_mode).strip().upper() != "PICK":
+        return True
+    if str(grasp_phase).strip().upper() not in ("APPROACH", "DESCEND"):
+        return True
+    return orientation_valid and max(abs(float(error)) for error in wrist_errors) <= float(tolerance)
 
 
 class ArmYawRhoZPositionController(Node):
@@ -179,6 +253,11 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("hold_wrist_during_place", True)
         self.declare_parameter("grasp_orientation_wrist_mode", "link6")
         self.declare_parameter("grasp_link6_orientation_offset", 0.0)
+        self.declare_parameter("grasp_link6_axis", "y")
+        self.declare_parameter("grasp_gripper_closing_axis", "x")
+        self.declare_parameter("grasp_target_closing_axis", "y")
+        self.declare_parameter("require_wrist_alignment_before_descend", True)
+        self.declare_parameter("wrist_orientation_tolerance", 0.12)
         self.declare_parameter("link1", 0.247)
         self.declare_parameter("link2", 0.45)
 
@@ -187,6 +266,7 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("grasp_lift_speed", 0.3)
         self.declare_parameter("grasp_lift_height", 0.12)
         self.declare_parameter("grasp_descend_depth", 0.08)
+        self.declare_parameter("grasp_approach_clearance_z", 0.0)
         self.declare_parameter("grasp_close_duration", 0.1)
         self.declare_parameter("gripper_open_position", 0.0)
         self.declare_parameter("gripper_close_position", 0.8)
@@ -328,6 +408,11 @@ class ArmYawRhoZPositionController(Node):
         self.grasp_link6_orientation_offset = float(
             self.get_parameter("grasp_link6_orientation_offset").value
         )
+        self.grasp_link6_axis = str(self.get_parameter("grasp_link6_axis").value).strip().lower()
+        self.grasp_gripper_closing_axis = str(self.get_parameter("grasp_gripper_closing_axis").value).strip().lower()
+        self.grasp_target_closing_axis = str(self.get_parameter("grasp_target_closing_axis").value).strip().lower()
+        self.require_wrist_alignment_before_descend = bool(self.get_parameter("require_wrist_alignment_before_descend").value)
+        self.wrist_orientation_tolerance = max(0.0, float(self.get_parameter("wrist_orientation_tolerance").value))
 
         # Grasp sequence parameters
         self.grasp_descend_speed = float(self.get_parameter("grasp_descend_speed").value)
@@ -337,6 +422,7 @@ class ArmYawRhoZPositionController(Node):
             0.0,
             float(self.get_parameter("grasp_descend_depth").value),
         )
+        self.grasp_approach_clearance_z = max(0.0, float(self.get_parameter("grasp_approach_clearance_z").value))
         self.grasp_close_duration = float(self.get_parameter("grasp_close_duration").value)
         self.gripper_open_position = float(self.get_parameter("gripper_open_position").value)
         self.gripper_close_position = float(self.get_parameter("gripper_close_position").value)
@@ -368,7 +454,7 @@ class ArmYawRhoZPositionController(Node):
         self.task_mode = "PICK"
         self.force_safety_pose = False
         self.grasp_phase = "APPROACH"  # APPROACH, DESCEND, GRASP, LIFT, HOLD
-        self.grasp_z_offset = self.grasp_offset_z  # current dynamic z offset
+        self.grasp_z_offset, _ = pick_z_offsets(self.grasp_offset_z, self.grasp_descend_depth, self.grasp_approach_clearance_z)
         self.grasp_phase_start_time = None
         self.gripper_position = self.gripper_open_position
         self.lift_z_accumulated = 0.0
@@ -414,7 +500,7 @@ class ArmYawRhoZPositionController(Node):
         self.force_safety_pose = False
         self.place_wrist_hold_positions = None
         self.grasp_phase = "APPROACH"
-        self.grasp_z_offset = self.grasp_offset_z
+        self.grasp_z_offset, _ = pick_z_offsets(self.grasp_offset_z, self.grasp_descend_depth, self.grasp_approach_clearance_z)
         self.grasp_phase_start_time = None
         self.gripper_position = self.gripper_open_position
         self.lift_z_accumulated = 0.0
@@ -565,16 +651,22 @@ class ArmYawRhoZPositionController(Node):
         q4_des = self.home_positions[3]
         q5_des = self.home_positions[4]
         q6_des = -1.5708  # -90 degrees to orient gripper for grasping
+        link6_delta = 0.0
+        link6_alignment_valid = True
         if self.task_mode == "PICK" and not self.force_safety_pose:
-            q4_des, q5_des, q6_des = compute_wrist_targets_from_orientation(
-                target_rotation=R_target,
-                link3_rotation=R_link3,
-                fallback_targets=[q4_des, q5_des, q6_des],
-                joint_lower_limits=self.joint_lower_limits,
-                joint_upper_limits=self.joint_upper_limits,
-                mode=self.grasp_orientation_wrist_mode,
-                link6_offset=self.grasp_link6_orientation_offset,
-            )
+            if self.grasp_orientation_wrist_mode == "link6":
+                q6_des, link6_delta, link6_alignment_valid = compute_link6_axis_target(
+                    R_target, R_ee, q6_curr, self.joint_lower_limits[5], self.joint_upper_limits[5],
+                    self.grasp_link6_axis, self.grasp_gripper_closing_axis,
+                    self.grasp_target_closing_axis, self.grasp_link6_orientation_offset,
+                )
+            else:
+                q4_des, q5_des, q6_des = compute_wrist_targets_from_orientation(
+                    target_rotation=R_target, link3_rotation=R_link3,
+                    fallback_targets=[q4_des, q5_des, q6_des], joint_lower_limits=self.joint_lower_limits,
+                    joint_upper_limits=self.joint_upper_limits, mode=self.grasp_orientation_wrist_mode,
+                    link6_offset=self.grasp_link6_orientation_offset,
+                )
         if (
             self.task_mode == "PLACE"
             and self.hold_wrist_during_place
@@ -584,13 +676,12 @@ class ArmYawRhoZPositionController(Node):
         ):
             q4_des, q5_des, q6_des = self.place_wrist_hold_positions
 
-        # ── Pick/place sequence state machine ──
-        self._update_task_phase(pos_aligned, dt)
-        self.publish_task_state()
-        
         e4 = normalize_angle(q4_des - q4_curr)
         e5 = normalize_angle(q5_des - q5_curr)
         e6 = normalize_angle(q6_des - q6_curr)
+        wrist_aligned = is_wrist_aligned_for_phase(self.task_mode, self.grasp_phase, [e4, e5, e6], self.wrist_orientation_tolerance, self.require_wrist_alignment_before_descend, link6_alignment_valid)
+        self._update_task_phase(pos_aligned and wrist_aligned, dt)
+        self.publish_task_state()
         
         joint4_velocity = clamp(self.k_wrist * e4, -self.max_wrist_velocity, self.max_wrist_velocity)
         joint5_velocity = clamp(self.k_wrist * e5, -self.max_wrist_velocity, self.max_wrist_velocity)
@@ -702,6 +793,9 @@ class ArmYawRhoZPositionController(Node):
             f"{self.position_command[1]:.3f}, {self.position_command[2]:.3f}], "
             f"task={self.task_mode}, phase={self.grasp_phase}, "
             f"z_off={self.grasp_z_offset:.3f}, "
+            f"wrist_err=[{e4:.3f}, {e5:.3f}, {e6:.3f}], "
+            f"wrist_aligned={wrist_aligned}, "
+            f"link6=[cur {q6_curr:.3f}, des {q6_des:.3f}, delta {link6_delta:.3f}, valid {link6_alignment_valid}], "
             f"grip={self.gripper_position:.2f}"
         )
 
@@ -934,13 +1028,13 @@ class ArmYawRhoZPositionController(Node):
             self.gripper_position = self.gripper_open_position
             if pos_aligned:
                 self.grasp_phase = "DESCEND"
-                self.grasp_z_offset = self.grasp_offset_z
+                self.grasp_z_offset, _ = pick_z_offsets(self.grasp_offset_z, self.grasp_descend_depth, self.grasp_approach_clearance_z)
                 self.get_logger().warn("Grasp phase: APPROACH → DESCEND")
 
         elif self.grasp_phase == "DESCEND":
             self.gripper_position = self.gripper_open_position
             # Gradually reduce the z offset to lower the arm
-            descend_target_offset = self.grasp_offset_z - self.grasp_descend_depth
+            _, descend_target_offset = pick_z_offsets(self.grasp_offset_z, self.grasp_descend_depth, self.grasp_approach_clearance_z)
             if self.grasp_z_offset > descend_target_offset:
                 self.grasp_z_offset = max(
                     descend_target_offset,
@@ -1054,7 +1148,7 @@ class ArmYawRhoZPositionController(Node):
             )
         self.task_mode = "PICK"
         self.grasp_phase = "APPROACH"
-        self.grasp_z_offset = self.grasp_offset_z
+        self.grasp_z_offset, _ = pick_z_offsets(self.grasp_offset_z, self.grasp_descend_depth, self.grasp_approach_clearance_z)
         self.gripper_position = self.gripper_open_position
         self.lift_z_accumulated = 0.0
 

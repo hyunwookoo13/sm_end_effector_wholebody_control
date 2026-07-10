@@ -24,9 +24,10 @@ class GpdWrapper:
     기본값은 안전한 휴리스틱 후보 생성으로 동작한다.
     """
 
-    def __init__(self, logger, default_opening_m: float = 0.04):
+    def __init__(self, logger, default_opening_m: float = 0.04, lateral_backoff_m: float = 0.0):
         self.logger = logger
         self.default_opening_m = float(default_opening_m)
+        self.lateral_backoff_m = float(lateral_backoff_m)
         self._load_error: Optional[str] = None
         self._warned = False
         self._last_yaw: Optional[float] = None
@@ -86,12 +87,10 @@ class GpdWrapper:
         yaw = self._stabilize_yaw(yaw)
         q = self._yaw_to_quat_xyzw(yaw)
 
-        # 6. target 위치 보정
-        # 중심점 그대로가 아니라 로봇 쪽/접근 방향으로 살짝 당김
-        approach_backoff = 0.03  # 3cm, 필요하면 0.02~0.06 조절
+        # 6. Top-down grasp는 ROI 중심을 사용한다.
         target = centroid.copy()
-        target[0] -= closing_axis[0] * approach_backoff
-        target[1] -= closing_axis[1] * approach_backoff
+        target[0] -= closing_axis[0] * self.lateral_backoff_m
+        target[1] -= closing_axis[1] * self.lateral_backoff_m
 
         # 너무 낮게 찍히면 테이블/물체 표면에 박을 수 있어서 살짝 위로
         target[2] += 0.015
