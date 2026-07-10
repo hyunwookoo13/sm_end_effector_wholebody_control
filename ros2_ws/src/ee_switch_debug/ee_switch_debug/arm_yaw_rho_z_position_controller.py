@@ -69,6 +69,35 @@ def decompose_yzy(R: list[list[float]]) -> tuple[float, float, float]:
     return alpha, beta, gamma
 
 
+def compute_wrist_targets_from_orientation(
+    target_rotation: list[list[float]],
+    link3_rotation: list[list[float]],
+    fallback_targets: list[float],
+    joint_lower_limits: list[float],
+    joint_upper_limits: list[float],
+    mode: str = "link6",
+    link6_offset: float = 0.0,
+) -> list[float]:
+    normalized_mode = str(mode).strip().lower()
+    if normalized_mode in ("", "false", "none", "off"):
+        return list(fallback_targets)
+
+    link3_from_world = transpose_matrix(link3_rotation)
+    link3_from_target = multiply_matrices(link3_from_world, target_rotation)
+    q4_target, q5_target, q6_target = decompose_yzy(link3_from_target)
+    q6_target = normalize_angle(q6_target + float(link6_offset))
+
+    if normalized_mode == "full":
+        targets = [normalize_angle(q4_target), normalize_angle(q5_target), q6_target]
+    else:
+        targets = [fallback_targets[0], fallback_targets[1], q6_target]
+
+    return [
+        clamp(targets[index], joint_lower_limits[index + 3], joint_upper_limits[index + 3])
+        for index in range(3)
+    ]
+
+
 class ArmYawRhoZPositionController(Node):
     def __init__(self) -> None:
         super().__init__("arm_yaw_rho_z_position_controller")
@@ -148,6 +177,8 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("k_wrist", 2.0)
         self.declare_parameter("max_wrist_velocity", 1.0)
         self.declare_parameter("hold_wrist_during_place", True)
+        self.declare_parameter("grasp_orientation_wrist_mode", "link6")
+        self.declare_parameter("grasp_link6_orientation_offset", 0.0)
         self.declare_parameter("link1", 0.247)
         self.declare_parameter("link2", 0.45)
 
@@ -285,6 +316,17 @@ class ArmYawRhoZPositionController(Node):
         self.max_wrist_velocity = float(self.get_parameter("max_wrist_velocity").value)
         self.hold_wrist_during_place = bool(
             self.get_parameter("hold_wrist_during_place").value
+        )
+        self.grasp_orientation_wrist_mode = str(
+            self.get_parameter("grasp_orientation_wrist_mode").value
+        ).strip().lower()
+        if self.grasp_orientation_wrist_mode not in ("off", "link6", "full"):
+            self.get_logger().warn(
+                "grasp_orientation_wrist_mode must be off, link6, or full; using link6"
+            )
+            self.grasp_orientation_wrist_mode = "link6"
+        self.grasp_link6_orientation_offset = float(
+            self.get_parameter("grasp_link6_orientation_offset").value
         )
 
         # Grasp sequence parameters
@@ -464,6 +506,7 @@ class ArmYawRhoZPositionController(Node):
 
         R_target = quaternion_to_matrix(target_transform.transform.rotation)
         R_ee = quaternion_to_matrix(ee_transform.transform.rotation)
+        R_link3 = quaternion_to_matrix(link3_transform.transform.rotation)
 
         offset_local = [0.008493, 0.017565, 0.0]
         # Current wrist center position in link0 frame
@@ -522,6 +565,16 @@ class ArmYawRhoZPositionController(Node):
         q4_des = self.home_positions[3]
         q5_des = self.home_positions[4]
         q6_des = -1.5708  # -90 degrees to orient gripper for grasping
+        if self.task_mode == "PICK" and not self.force_safety_pose:
+            q4_des, q5_des, q6_des = compute_wrist_targets_from_orientation(
+                target_rotation=R_target,
+                link3_rotation=R_link3,
+                fallback_targets=[q4_des, q5_des, q6_des],
+                joint_lower_limits=self.joint_lower_limits,
+                joint_upper_limits=self.joint_upper_limits,
+                mode=self.grasp_orientation_wrist_mode,
+                link6_offset=self.grasp_link6_orientation_offset,
+            )
         if (
             self.task_mode == "PLACE"
             and self.hold_wrist_during_place

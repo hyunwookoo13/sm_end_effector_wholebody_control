@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "sm_florence_2_vlm_node = sm_florence_2_vlm.florence_2_vlm_node:main",
+            "sm_yoloe_vlm_node = sm_florence_2_vlm.yoloe_vlm_node:main",
         ],
     },
 )

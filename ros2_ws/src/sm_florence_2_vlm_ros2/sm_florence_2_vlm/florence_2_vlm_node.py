@@ -28,6 +28,33 @@ from std_msgs.msg import ColorRGBA, String
 from visualization_msgs.msg import Marker, MarkerArray
 
 
+COLOR_WORDS = {"red", "blue", "yellow"}
+CLASS_ALIASES = {
+    "can": {"can", "tin", "soup can", "tomato soup can"},
+    "box": {"box", "bin", "container", "carton", "package", "tray", "plastic tray"},
+    "dish": {"dish", "plate", "tray"},
+    "mug": {"mug", "cup", "coffee cup", "coffee mug", "teacup", "tea cup"},
+    "cup": {"cup", "mug", "coffee cup", "coffee mug", "teacup", "tea cup"},
+    "bottle": {"bottle", "water bottle", "drink bottle"},
+    "person": {"person", "human", "man", "woman"},
+    "chair": {"chair", "office chair", "stool"},
+}
+
+
+def split_semantic_target(name: str) -> tuple[str | None, str]:
+    tokens = str(name).strip().lower().split()
+    if tokens and tokens[0] in COLOR_WORDS:
+        return tokens[0], " ".join(tokens[1:]) or tokens[0]
+    return None, " ".join(tokens)
+
+
+def class_aliases_for(name: str) -> set[str]:
+    _, base_class = split_semantic_target(name)
+    aliases = set(CLASS_ALIASES.get(base_class, {base_class}))
+    aliases.add(base_class)
+    return {alias for alias in aliases if alias}
+
+
 class Florence2Detector:
     """Florence-2 모델 로딩과 객체 검출 실행을 담당합니다."""
 
@@ -112,8 +139,26 @@ class Florence2Detector:
     @staticmethod
     def build_prompt(target_objects: list[str]) -> str:
         """다중 객체 목록을 Florence-2 open vocabulary prompt로 구성합니다."""
-        object_text = ", ".join(target_objects)
+        object_text = ", ".join(Florence2Detector.expand_target_prompts(target_objects))
         return f"<OPEN_VOCABULARY_DETECTION>{object_text}"
+
+    @staticmethod
+    def expand_target_prompts(target_objects: list[str]) -> list[str]:
+        prompts: list[str] = []
+        for target in target_objects:
+            target_name = str(target).strip().lower()
+            if not target_name:
+                continue
+            requested_color, _ = split_semantic_target(target_name)
+            aliases = sorted(class_aliases_for(target_name))
+            candidates = [target_name]
+            if requested_color:
+                candidates.extend(f"{requested_color} {alias}" for alias in aliases)
+            candidates.extend(aliases)
+            for candidate in candidates:
+                if candidate and candidate not in prompts:
+                    prompts.append(candidate)
+        return prompts
 
     def detect(self, rgb_bgr: np.ndarray, target_objects: list[str]) -> list[dict[str, Any]]:
         """RGB 이미지에서 target_objects에 해당하는 bbox 목록을 반환합니다."""
@@ -162,20 +207,10 @@ class Florence2Detector:
 
         results = []
         target_set = {name.lower() for name in target_objects}
-        # 실사용에서 자주 바뀌는 라벨 동의어를 허용합니다.
-        alias_map = {
-            "mug": {"mug", "cup", "coffee cup", "coffee mug", "teacup", "tea cup"},
-            "cup": {"cup", "mug", "coffee cup", "coffee mug", "teacup", "tea cup"},
-            "bottle": {"bottle", "water bottle", "drink bottle"},
-            "person": {"person", "human", "man", "woman"},
-            "chair": {"chair", "office chair", "stool"},
-            "box": {"box", "carton", "package"},
-        }
-
         expanded_targets = set()
         for name in target_set:
             expanded_targets.add(name)
-            expanded_targets.update(alias_map.get(name, set()))
+            expanded_targets.update(class_aliases_for(name))
         for idx, bbox in enumerate(bboxes):
             label = str(labels[idx]) if idx < len(labels) else "object"
             score = float(scores[idx]) if idx < len(scores) else 1.0
@@ -1017,7 +1052,16 @@ class Florence2VLMNode(Node):
         for det in raw_detections:
             det_bbox = self._scale_bbox_to_original(det["bbox"], sx, sy)
             bbox = self._clip_bbox(det_bbox, rgb_bgr.shape[1], rgb_bgr.shape[0])
-            object_name = det["object_name"]
+            raw_object_name = str(det["object_name"])
+            color_info = self._classify_bbox_color(rgb_bgr, bbox)
+            semantic_match = self._match_semantic_target(
+                raw_object_name,
+                current_targets,
+                color_info,
+            )
+            if semantic_match is None:
+                continue
+            object_name = semantic_match["target_name"]
             index = object_count_by_name.get(object_name, 0)
             object_count_by_name[object_name] = index + 1
             object_id = f"{object_name}_{index}"
@@ -1087,6 +1131,9 @@ class Florence2VLMNode(Node):
                 self.roi_geometry_mode,
                 roi_mask_used,
                 roi_mask_area_px,
+                raw_object_name,
+                semantic_match,
+                color_info,
             )
             objects.append(obj)
         t_after_post = time.monotonic()
@@ -1113,6 +1160,72 @@ class Florence2VLMNode(Node):
             det_count=len(raw_detections),
             obj_count=len(objects),
         )
+
+    def _match_semantic_target(
+        self,
+        raw_label: str,
+        targets: list[str],
+        color_info: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        label = raw_label.strip().lower()
+        for target in targets:
+            target_name = str(target).strip().lower()
+            if not target_name:
+                continue
+            requested_color, base_class = split_semantic_target(target_name)
+            aliases = class_aliases_for(target_name)
+            class_match = (
+                target_name in label
+                or label in aliases
+                or any(alias and alias in label for alias in aliases)
+            )
+            if not class_match:
+                continue
+            if requested_color:
+                score = float(color_info.get("scores", {}).get(requested_color, 0.0))
+                if score < 0.08:
+                    continue
+            return {
+                "target_name": target_name,
+                "semantic_class": base_class,
+                "requested_color": requested_color,
+            }
+        return None
+
+    def _classify_bbox_color(self, rgb_bgr: np.ndarray, bbox: dict[str, int]) -> dict[str, Any]:
+        xmin = int(bbox["xmin"])
+        ymin = int(bbox["ymin"])
+        xmax = int(bbox["xmax"])
+        ymax = int(bbox["ymax"])
+        if xmax <= xmin or ymax <= ymin:
+            return {"observed_color": "", "scores": {}}
+
+        roi = rgb_bgr[ymin : ymax + 1, xmin : xmax + 1]
+        if roi.size == 0:
+            return {"observed_color": "", "scores": {}}
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        saturation = hsv[:, :, 1]
+        value = hsv[:, :, 2]
+        valid = (saturation > 45) & (value > 45)
+        valid_count = int(np.count_nonzero(valid))
+        if valid_count <= 0:
+            return {"observed_color": "", "scores": {}}
+
+        hue = hsv[:, :, 0]
+        masks = {
+            "red": valid & ((hue <= 10) | (hue >= 150)),
+            "yellow": valid & (hue >= 18) & (hue <= 42),
+            "blue": valid & (hue >= 85) & (hue <= 135),
+        }
+        scores = {
+            color: float(np.count_nonzero(mask)) / float(valid_count)
+            for color, mask in masks.items()
+        }
+        observed_color = max(scores, key=scores.get) if scores else ""
+        if scores and scores[observed_color] < 0.08:
+            observed_color = ""
+        return {"observed_color": observed_color, "scores": scores}
 
     def _publish_results(
         self,
@@ -1170,12 +1283,20 @@ class Florence2VLMNode(Node):
         roi_geometry_mode: str,
         roi_mask_used: bool,
         roi_mask_area_px: int,
+        raw_object_name: str,
+        semantic_match: dict[str, Any],
+        color_info: dict[str, Any],
     ) -> dict[str, Any]:
         camera_pos = self._point_to_dict(camera_point, self.camera_frame)
         target_pos = self._point_to_dict(target_point, self.target_frame) if target_point else None
         return {
             "object_id": object_id,
             "object_name": object_name,
+            "raw_object_name": raw_object_name,
+            "semantic_class": semantic_match.get("semantic_class", ""),
+            "requested_color": semantic_match.get("requested_color") or "",
+            "observed_color": color_info.get("observed_color", ""),
+            "color_scores": color_info.get("scores", {}),
             "confidence": confidence,
             "bbox": bbox,
             "center_pixel": {"u": u, "v": v},

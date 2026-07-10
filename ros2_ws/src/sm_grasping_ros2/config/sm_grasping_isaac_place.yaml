@@ -1,0 +1,46 @@
+sm_grasping_inference_place:
+  ros__parameters:
+    input_roi_pointcloud_topic: "/sm_florence_2_vlm_place/roi_pointcloud"
+
+    output_grasp_candidates_topic: "/sm_grasping_place/grasp_candidates"
+    output_grasp_scores_topic: "/sm_grasping_place/grasp_scores"
+    output_grasp_openings_topic: "/sm_grasping_place/grasp_openings"
+    output_grasp_best_topic: "/sm_grasping_place/grasp_best"
+    output_grasp_debug_topic: "/sm_grasping_place/grasp_debug"
+
+    use_tf_transform: true
+    target_frame: "chassis_link"
+    tf_timeout_sec: 0.2
+
+    inference_rate_hz: 7.0
+    max_candidates: 20
+    min_grasp_score: 0.2
+
+    workspace.x_min: -1.0
+    workspace.x_max: 1.5
+    workspace.y_min: -1.0
+    workspace.y_max: 1.0
+    workspace.z_min: 0.0
+    workspace.z_max: 1.8
+
+    gpd_default_opening_m: 0.04
+    gripper.opening_margin_m: 0.005
+    gripper.opening_width_percentile_low: 5.0
+    gripper.opening_width_percentile_high: 95.0
+    gripper.min_opening_m: 0.01
+    gripper.max_opening_m: 0.15
+
+    gpd_force_top_down_orientation: false
+    gpd_top_down_quaternion_xyzw: [0.0, 0.70710678, 0.0, 0.70710678]
+    gpd_to_robot_quaternion_xyzw: [0.0, 0.0, 0.0, 1.0]
+    grasp_z_offset_m: 0.0
+    gpd_additional_rpy_deg: [0.0, 0.0, 0.0]
+
+    base_offset_xyz_m: [0.02, 0.0, -0.035]
+    base_additional_rpy_deg: [0.0, 90.0, 90.0]
+    target_frame_yaw_only: true
+    target_frame_apply_fixed_roll_pitch: true
+
+    position_ema_alpha: 0.6
+    orientation_ema_alpha: 0.5
+    max_translation_step_m: 0.05

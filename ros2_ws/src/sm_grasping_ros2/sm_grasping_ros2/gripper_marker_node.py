@@ -7,6 +7,7 @@ import rclpy
 from geometry_msgs.msg import Point, PoseArray, PoseStamped
 from rclpy.node import Node
 from std_msgs.msg import ColorRGBA, Float32MultiArray
+from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -20,6 +21,9 @@ class GripperMarkerNode(Node):
         self._latest_candidates: PoseArray | None = None
         self._latest_best: PoseStamped | None = None
         self._latest_openings: list[float] = []
+        self._last_tf_warn_ns = 0
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self)
 
         self.create_subscription(PoseArray, self.p_input_candidates_topic, self._on_candidates, 10)
         self.create_subscription(PoseStamped, self.p_input_best_topic, self._on_best, 10)
@@ -32,6 +36,8 @@ class GripperMarkerNode(Node):
         self.declare_parameter("input_grasp_best_topic", "/sm_grasping/grasp_best")
         self.declare_parameter("input_grasp_openings_topic", "/sm_grasping/grasp_openings")
         self.declare_parameter("output_gripper_markers_topic", "/sm_grasping/gripper_markers")
+        self.declare_parameter("output_frame", "")
+        self.declare_parameter("tf_timeout_sec", 0.05)
         self.declare_parameter("gripper.finger_length_m", 0.06)
         self.declare_parameter("gripper.finger_width_m", 0.01)
         self.declare_parameter("gripper.finger_thickness_m", 0.008)
@@ -54,6 +60,8 @@ class GripperMarkerNode(Node):
         self.p_input_best_topic = gp("input_grasp_best_topic").value
         self.p_input_openings_topic = gp("input_grasp_openings_topic").value
         self.p_output_markers_topic = gp("output_gripper_markers_topic").value
+        self.p_output_frame = str(gp("output_frame").value).strip()
+        self.p_tf_timeout_sec = float(gp("tf_timeout_sec").value)
         self.p_finger_length_m = float(gp("gripper.finger_length_m").value)
         self.p_finger_width_m = float(gp("gripper.finger_width_m").value)
         self.p_finger_thickness_m = float(gp("gripper.finger_thickness_m").value)
@@ -95,8 +103,12 @@ class GripperMarkerNode(Node):
         marker_id = 0
 
         if self._latest_best is not None:
-            best_pose = deepcopy(self._latest_best.pose)
-            frame_id = self._latest_best.header.frame_id
+            best_pose, frame_id = self._pose_in_output_frame(
+                self._latest_best.pose,
+                self._latest_best.header.frame_id,
+            )
+            if best_pose is None:
+                return
             opening_best = self._latest_openings[0] if self._latest_openings else self.p_default_opening_m
             if self.p_show_grasp_point:
                 marker_id = self._append_grasp_point_marker(marker_array, frame_id, best_pose, "best_grasp_point", marker_id)
@@ -118,8 +130,11 @@ class GripperMarkerNode(Node):
             and self._latest_candidates is not None
             and self._latest_candidates.poses
         ):
-            frame_id = self._latest_candidates.header.frame_id
+            source_frame_id = self._latest_candidates.header.frame_id
             for idx, pose in enumerate(self._latest_candidates.poses):
+                marker_pose, frame_id = self._pose_in_output_frame(pose, source_frame_id)
+                if marker_pose is None:
+                    continue
                 opening = (
                     self._latest_openings[idx]
                     if idx < len(self._latest_openings)
@@ -128,7 +143,7 @@ class GripperMarkerNode(Node):
                 marker_id = self._append_gripper_markers(
                     marker_array,
                     frame_id,
-                    deepcopy(pose),
+                    marker_pose,
                     self.p_candidate_color,
                     "candidate",
                     marker_id,
@@ -137,6 +152,61 @@ class GripperMarkerNode(Node):
 
         if marker_array.markers:
             self._pub_markers.publish(marker_array)
+
+    def _pose_in_output_frame(self, pose, source_frame: str):
+        if not self.p_output_frame or self.p_output_frame == source_frame:
+            return deepcopy(pose), source_frame
+
+        try:
+            transform = self._tf_buffer.lookup_transform(
+                self.p_output_frame,
+                source_frame,
+                rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=self.p_tf_timeout_sec),
+            )
+        except TransformException as exc:
+            self._warn_tf_throttled(source_frame, exc)
+            return None, source_frame
+
+        return self._transform_pose(pose, transform), self.p_output_frame
+
+    def _warn_tf_throttled(self, source_frame: str, exc: Exception) -> None:
+        now_ns = self.get_clock().now().nanoseconds
+        if now_ns - self._last_tf_warn_ns < 2_000_000_000:
+            return
+        self._last_tf_warn_ns = now_ns
+        self.get_logger().warn(
+            f"gripper marker TF 변환 대기 중: {self.p_output_frame} <- {source_frame}: {exc}"
+        )
+
+    def _transform_pose(self, pose, transform):
+        q_tf = [
+            transform.transform.rotation.x,
+            transform.transform.rotation.y,
+            transform.transform.rotation.z,
+            transform.transform.rotation.w,
+        ]
+        rotated_position = self._rotate_vec_by_quat(
+            [pose.position.x, pose.position.y, pose.position.z],
+            q_tf,
+        )
+        out = deepcopy(pose)
+        out.position.x = float(transform.transform.translation.x + rotated_position[0])
+        out.position.y = float(transform.transform.translation.y + rotated_position[1])
+        out.position.z = float(transform.transform.translation.z + rotated_position[2])
+
+        q_pose = [
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        ]
+        q_out = self._quat_multiply(q_tf, q_pose)
+        out.orientation.x = q_out[0]
+        out.orientation.y = q_out[1]
+        out.orientation.z = q_out[2]
+        out.orientation.w = q_out[3]
+        return out
 
     def _append_gripper_markers(
         self,
@@ -289,7 +359,7 @@ class GripperMarkerNode(Node):
     @staticmethod
     def _rotate_vec_by_quat(v, q):
         """벡터 v를 쿼터니언 q(x,y,z,w)로 회전한다."""
-        x, y, z, w = q
+        x, y, z, w = GripperMarkerNode._normalize_quat(q)
         vx, vy, vz = v
         # q * v * q_conj
         # v를 순허수 쿼터니언으로 보고 계산
@@ -302,6 +372,27 @@ class GripperMarkerNode(Node):
         ry = iy * w + iw * -y + iz * -x - ix * -z
         rz = iz * w + iw * -z + ix * -y - iy * -x
         return [rx, ry, rz]
+
+    @staticmethod
+    def _normalize_quat(q):
+        x, y, z, w = [float(value) for value in q]
+        norm = (x * x + y * y + z * z + w * w) ** 0.5
+        if norm <= 1e-9:
+            return [0.0, 0.0, 0.0, 1.0]
+        return [x / norm, y / norm, z / norm, w / norm]
+
+    @staticmethod
+    def _quat_multiply(a, b):
+        ax, ay, az, aw = GripperMarkerNode._normalize_quat(a)
+        bx, by, bz, bw = GripperMarkerNode._normalize_quat(b)
+        return GripperMarkerNode._normalize_quat(
+            [
+                aw * bx + ax * bw + ay * bz - az * by,
+                aw * by - ax * bz + ay * bw + az * bx,
+                aw * bz + ax * by - ay * bx + az * bw,
+                aw * bw - ax * bx - ay * by - az * bz,
+            ]
+        )
 
 
 def main(args=None):

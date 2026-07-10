@@ -23,6 +23,23 @@ from .grasp_postprocess import filter_candidates
 from .gpd_wrapper import GpdWrapper
 
 
+def sanitize_candidate_openings(
+    candidate_openings: list[float],
+    max_opening_m: float,
+) -> tuple[list[float], list[float]]:
+    sanitized: list[float] = []
+    oversized: list[float] = []
+    max_opening = max(0.0, float(max_opening_m))
+    for opening in candidate_openings:
+        value = float(opening)
+        if value > max_opening:
+            oversized.append(value)
+            sanitized.append(max_opening)
+        else:
+            sanitized.append(value)
+    return sanitized, oversized
+
+
 class AnyGraspInferenceNode(Node):
     """ROI 포인트클라우드 기반 GPD 추론 노드."""
 
@@ -147,6 +164,12 @@ class AnyGraspInferenceNode(Node):
         with self._lock:
             self._latest_cloud = msg
 
+    def _take_latest_cloud(self) -> PointCloud2 | None:
+        with self._lock:
+            cloud = self._latest_cloud
+            self._latest_cloud = None
+        return cloud
+
     def _on_set_parameters(self, params):
         """런타임 파라미터 변경을 내부 변수에 즉시 반영한다."""
         try:
@@ -203,8 +226,7 @@ class AnyGraspInferenceNode(Node):
         if self._is_inferencing:
             return
 
-        with self._lock:
-            cloud = self._latest_cloud
+        cloud = self._take_latest_cloud()
 
         if cloud is None:
             return
@@ -254,21 +276,19 @@ class AnyGraspInferenceNode(Node):
             score_msg.data = []
             opening_msg = Float32MultiArray()
             opening_msg.data = []
-            candidate_openings = [self._estimate_opening_from_roi(points, item.quaternion_xyzw) for item in candidates]
-            too_large_openings = [opening for opening in candidate_openings if opening > self.p_max_opening_m]
-            if too_large_openings:
-                self._publish_empty_grasp_result(cloud)
-                self._publish_debug(
-                    "ERR_OBJECT_TOO_LARGE",
-                    (
-                        "객체 폭이 그리퍼 최대 벌림보다 큽니다: "
-                        f"required={max(too_large_openings):.3f}m, max={self.p_max_opening_m:.3f}m"
-                    ),
-                    0,
-                    0.0,
-                    0.0,
+            raw_candidate_openings = [
+                self._estimate_opening_from_roi(points, item.quaternion_xyzw)
+                for item in candidates
+            ]
+            candidate_openings, oversized_openings = sanitize_candidate_openings(
+                raw_candidate_openings,
+                self.p_max_opening_m,
+            )
+            if oversized_openings:
+                self.get_logger().warn(
+                    "ROI 폭 추정이 그리퍼 최대 벌림보다 커 opening만 clamp합니다: "
+                    f"required={max(oversized_openings):.3f}m, max={self.p_max_opening_m:.3f}m"
                 )
-                return
 
             for item, adaptive_opening in zip(candidates, candidate_openings):
                 pose = Pose()
