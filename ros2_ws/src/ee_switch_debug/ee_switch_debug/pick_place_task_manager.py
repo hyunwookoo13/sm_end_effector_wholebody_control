@@ -9,6 +9,31 @@ from std_msgs.msg import String
 from tf2_ros import Buffer, TransformBroadcaster, TransformException, TransformListener
 
 
+COLOR_WORDS = {"red", "blue", "yellow", "green", "pink"}
+CLASS_ALIASES = {
+    "can": {"can", "tin", "soup can", "tomato soup can"},
+    "box": {"box", "bin", "container", "carton", "package", "tray", "plastic tray"},
+    "dish": {"dish", "plate", "tray"},
+    "mug": {"mug", "cup", "coffee cup", "coffee mug", "teacup", "tea cup"},
+    "cup": {"cup", "mug", "coffee cup", "coffee mug", "teacup", "tea cup"},
+    "bottle": {"bottle", "water bottle", "drink bottle"},
+}
+
+
+def split_semantic_target(name: str) -> tuple[str | None, str]:
+    tokens = str(name).strip().lower().split()
+    if tokens and tokens[0] in COLOR_WORDS:
+        return tokens[0], " ".join(tokens[1:]) or tokens[0]
+    return None, " ".join(tokens)
+
+
+def class_aliases_for(name: str) -> set[str]:
+    _, base_class = split_semantic_target(name)
+    aliases = set(CLASS_ALIASES.get(base_class, {base_class}))
+    aliases.add(base_class)
+    return {alias for alias in aliases if alias}
+
+
 def normalize_quaternion_xyzw(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     x, y, z, w = q
     norm = (x * x + y * y + z * z + w * w) ** 0.5
@@ -60,6 +85,7 @@ class PickPlaceTaskManager(Node):
         self.declare_parameter("detections_topic", "/sm_florence_2_vlm/detections")
         self.declare_parameter("place_detections_topic", "")
         self.declare_parameter("grasp_topic", "/sm_grasping/grasp_best")
+        self.declare_parameter("extra_grasp_topics", [""])
         self.declare_parameter("arm_task_command_topic", "/arm_task_command")
         self.declare_parameter("arm_task_state_topic", "/arm_task_state")
         self.declare_parameter("task_state_topic", "/pick_place_task_state")
@@ -71,6 +97,7 @@ class PickPlaceTaskManager(Node):
         self.declare_parameter("rate_hz", 30.0)
         self.declare_parameter("target_objects_publish_period", 1.0)
         self.declare_parameter("tf_timeout_sec", 0.1)
+        self.declare_parameter("fresh_grasp_delay_sec", 0.35)
         self.declare_parameter("min_place_confidence", 0.0)
         self.declare_parameter("pick_offset_x", 0.0)
         self.declare_parameter("pick_offset_y", 0.0)
@@ -87,6 +114,7 @@ class PickPlaceTaskManager(Node):
             or self.detections_topic
         )
         self.grasp_topic = str(self.get_parameter("grasp_topic").value)
+        self.grasp_topics = self._load_topic_list("extra_grasp_topics", [self.grasp_topic])
         self.arm_task_command_topic = str(self.get_parameter("arm_task_command_topic").value)
         self.arm_task_state_topic = str(self.get_parameter("arm_task_state_topic").value)
         self.task_state_topic = str(self.get_parameter("task_state_topic").value)
@@ -100,6 +128,10 @@ class PickPlaceTaskManager(Node):
             self.get_parameter("target_objects_publish_period").value
         )
         self.tf_timeout_sec = float(self.get_parameter("tf_timeout_sec").value)
+        self.fresh_grasp_delay_sec = max(
+            0.0,
+            float(self.get_parameter("fresh_grasp_delay_sec").value),
+        )
         self.min_place_confidence = float(self.get_parameter("min_place_confidence").value)
         self.pick_offset = (
             float(self.get_parameter("pick_offset_x").value),
@@ -120,14 +152,30 @@ class PickPlaceTaskManager(Node):
         self.pick_transform: TransformStamped | None = None
         self.place_transform: TransformStamped | None = None
         self.current_transform: TransformStamped | None = None
+        self.selected_pick_source = ""
+        self.selected_place_source = ""
+        self.task_start_ns = 0
+        self.grasp_accept_after_ns = 0
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.tf_broadcaster = TransformBroadcaster(self)
 
         self.create_subscription(String, self.task_topic, self.on_task_command, 10)
-        self.create_subscription(PoseStamped, self.grasp_topic, self.on_grasp_best, 10)
-        self.create_subscription(String, self.place_detections_topic, self.on_detections, 10)
+        for topic in self.grasp_topics:
+            self.create_subscription(
+                PoseStamped,
+                topic,
+                lambda msg, source=topic: self.on_grasp_best(msg, source),
+                10,
+            )
+        for topic in self._unique_topics([self.detections_topic, self.place_detections_topic]):
+            self.create_subscription(
+                String,
+                topic,
+                lambda msg, source=topic: self.on_detections(msg, source),
+                10,
+            )
         self.create_subscription(String, self.arm_task_state_topic, self.on_arm_task_state, 10)
         self.target_objects_pub = self.create_publisher(String, self.target_objects_topic, 10)
         self.arm_task_command_pub = self.create_publisher(String, self.arm_task_command_topic, 10)
@@ -140,8 +188,27 @@ class PickPlaceTaskManager(Node):
 
         self.get_logger().info(
             f"Pick/place manager target={self.target_frame}, parent={self.parent_frame}, "
-            f"task_topic={self.task_topic}, place_detections={self.place_detections_topic}"
+            f"task_topic={self.task_topic}, detections={self._unique_topics([self.detections_topic, self.place_detections_topic])}, "
+            f"grasp_topics={self.grasp_topics}"
         )
+
+    def _load_topic_list(self, parameter_name: str, defaults: list[str]) -> list[str]:
+        values = [topic for topic in defaults if topic]
+        parameter_value = self.get_parameter(parameter_name).value
+        if isinstance(parameter_value, (list, tuple)):
+            values.extend(str(item).strip() for item in parameter_value if str(item).strip())
+        elif parameter_value:
+            values.extend(token.strip() for token in str(parameter_value).split(",") if token.strip())
+        return self._unique_topics(values)
+
+    @staticmethod
+    def _unique_topics(topics: list[str]) -> list[str]:
+        unique = []
+        for topic in topics:
+            normalized = str(topic).strip()
+            if normalized and normalized not in unique:
+                unique.append(normalized)
+        return unique
 
     def on_task_command(self, msg: String) -> None:
         parsed = self.parse_task(msg.data)
@@ -183,18 +250,30 @@ class PickPlaceTaskManager(Node):
         self.place_object = place_object
         self.phase = "FIND_PICK"
         self.arm_task_state = ""
-        self.current_perception_object = pick_object
+        self.current_perception_object = self.build_perception_label(pick_object, place_object)
+        now_ns = self.get_clock().now().nanoseconds
+        self.task_start_ns = now_ns
+        self.grasp_accept_after_ns = now_ns + int(self.fresh_grasp_delay_sec * 1e9)
         self.last_target_objects_publish_ns = 0
         self.pick_transform = None
         self.place_transform = None
         self.current_transform = None
+        self.selected_pick_source = ""
+        self.selected_place_source = ""
         self.publish_target_object(force=True)
         self.publish_arm_command("PICK")
         self.publish_task_state()
         self.get_logger().warn(f"Pick/place task started: pick={pick_object}, place={place_object}")
 
-    def on_grasp_best(self, msg: PoseStamped) -> None:
+    def on_grasp_best(self, msg: PoseStamped, source_topic: str = "") -> None:
         if self.phase != "FIND_PICK":
+            return
+        now_ns = self.get_clock().now().nanoseconds
+        if not self.is_fresh_grasp_message(msg, now_ns):
+            self.last_debug = (
+                f"ignored stale/early grasp from {source_topic or '<unknown>'}; "
+                f"waiting for fresh {self.pick_object} grasp"
+            )
             return
         transform = self.pose_to_parent_transform(
             source_frame=msg.header.frame_id,
@@ -214,9 +293,22 @@ class PickPlaceTaskManager(Node):
             return
         self.pick_transform = transform
         self.current_transform = transform
+        self.selected_pick_source = source_topic
 
-    def on_detections(self, msg: String) -> None:
-        if self.phase != "FIND_PLACE":
+    def is_fresh_grasp_message(self, msg: PoseStamped, now_ns: int) -> bool:
+        if int(now_ns) < int(self.grasp_accept_after_ns):
+            return False
+        stamp_ns = self.stamp_to_nanoseconds(msg.header.stamp)
+        if stamp_ns > 0 and self.task_start_ns > 0 and stamp_ns < self.task_start_ns:
+            return False
+        return True
+
+    @staticmethod
+    def stamp_to_nanoseconds(stamp) -> int:
+        return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
+
+    def on_detections(self, msg: String, source_topic: str = "") -> None:
+        if self.phase not in ("FIND_PICK", "PICK", "FIND_PLACE"):
             return
         try:
             payload = json.loads(msg.data)
@@ -231,12 +323,14 @@ class PickPlaceTaskManager(Node):
 
         obj = self.select_detection(objects, self.place_object)
         if obj is None:
-            self.last_debug = f"waiting for place object: {self.place_object}"
+            if self.phase == "FIND_PLACE":
+                self.last_debug = f"waiting for place object: {self.place_object}"
             return
 
         pos = obj.get("position_target_frame")
         if not isinstance(pos, dict):
-            self.last_debug = "place object has no position_target_frame"
+            if self.phase == "FIND_PLACE":
+                self.last_debug = "place object has no position_target_frame"
             return
 
         try:
@@ -256,10 +350,18 @@ class PickPlaceTaskManager(Node):
         if transform is None:
             return
         self.place_transform = transform
-        self.current_transform = transform
+        self.selected_place_source = source_topic
+        if self.phase == "FIND_PLACE":
+            self.current_transform = transform
+        else:
+            self.last_debug = (
+                f"cached place target: {self.place_object} via {source_topic or '<unknown>'}"
+            )
 
     def select_detection(self, objects: list[Any], target_name: str) -> dict[str, Any] | None:
         target = target_name.strip().lower()
+        target_color, target_class = split_semantic_target(target)
+        target_aliases = class_aliases_for(target)
         matches: list[dict[str, Any]] = []
         for obj in objects:
             if not isinstance(obj, dict):
@@ -268,8 +370,24 @@ class PickPlaceTaskManager(Node):
             if confidence < self.min_place_confidence:
                 continue
             name = str(obj.get("object_name", "")).strip().lower()
-            if target and target not in name and name not in target:
+            semantic_class = str(obj.get("semantic_class", "")).strip().lower()
+            class_match = (
+                not target
+                or target in name
+                or name in target
+                or semantic_class == target_class
+                or any(alias and alias in name for alias in target_aliases)
+            )
+            if not class_match:
                 continue
+            if target_color:
+                observed_color = str(obj.get("observed_color", "")).strip().lower()
+                color_scores = obj.get("color_scores", {})
+                color_score = 0.0
+                if isinstance(color_scores, dict):
+                    color_score = float(color_scores.get(target_color, 0.0))
+                if observed_color != target_color and color_score < 0.08:
+                    continue
             matches.append(obj)
         if not matches:
             return None
@@ -350,11 +468,16 @@ class PickPlaceTaskManager(Node):
             self.current_transform = self.pick_transform
             self.publish_arm_command("PICK")
             self.phase = "PICK"
-            self.get_logger().warn("Task phase: FIND_PICK -> PICK")
+            self.get_logger().warn(
+                f"Task phase: FIND_PICK -> PICK via {self.selected_pick_source or '<unknown>'}"
+            )
 
         elif self.phase == "PICK":
             if self.arm_task_state == "PICK:HOLD":
-                self.current_perception_object = self.place_object
+                self.current_perception_object = self.build_perception_label(
+                    self.pick_object,
+                    self.place_object,
+                )
                 self.last_target_objects_publish_ns = 0
                 self.publish_target_object(force=True)
                 self.phase = "FIND_PLACE"
@@ -367,7 +490,9 @@ class PickPlaceTaskManager(Node):
             self.current_transform = self.place_transform
             self.publish_arm_command("PLACE")
             self.phase = "PLACE"
-            self.get_logger().warn("Task phase: FIND_PLACE -> PLACE")
+            self.get_logger().warn(
+                f"Task phase: FIND_PLACE -> PLACE via {self.selected_place_source or '<unknown>'}"
+            )
 
         elif self.phase == "PLACE":
             if self.arm_task_state == "PLACE:HOLD":
@@ -378,14 +503,42 @@ class PickPlaceTaskManager(Node):
             self.last_debug = "pick/place task done"
 
     def publish_target_object(self, force: bool) -> None:
-        if not self.current_perception_object:
+        payload = self.build_perception_payload(self.pick_object, self.place_object)
+        if not payload:
             return
         now_ns = self.get_clock().now().nanoseconds
         elapsed = (now_ns - self.last_target_objects_publish_ns) * 1e-9
         if not force and elapsed < self.target_objects_publish_period:
             return
-        self.target_objects_pub.publish(String(data=self.current_perception_object))
+        self.target_objects_pub.publish(String(data=payload))
         self.last_target_objects_publish_ns = now_ns
+
+    @staticmethod
+    def build_perception_label(pick_object: str, place_object: str) -> str:
+        return ", ".join(PickPlaceTaskManager.unique_nonempty([pick_object, place_object]))
+
+    @staticmethod
+    def build_perception_payload(pick_object: str, place_object: str) -> str:
+        targets = PickPlaceTaskManager.unique_nonempty([pick_object, place_object])
+        roi_targets = PickPlaceTaskManager.unique_nonempty([pick_object])
+        if not targets:
+            return ""
+        return json.dumps(
+            {
+                "target_objects": targets,
+                "roi_target_objects": roi_targets,
+            },
+            ensure_ascii=False,
+        )
+
+    @staticmethod
+    def unique_nonempty(values: list[str]) -> list[str]:
+        unique: list[str] = []
+        for value in values:
+            normalized = str(value).strip()
+            if normalized and normalized not in unique:
+                unique.append(normalized)
+        return unique
 
     def publish_arm_command(self, command: str) -> None:
         self.arm_task_command_pub.publish(String(data=command))
@@ -409,7 +562,9 @@ class PickPlaceTaskManager(Node):
         self.get_logger().info(
             f"phase={self.phase}, pick={self.pick_object}, place={self.place_object}, "
             f"perception={self.current_perception_object or '<none>'}, "
-            f"arm={self.arm_task_state or '<none>'}, {target}, {self.last_debug}"
+            f"arm={self.arm_task_state or '<none>'}, {target}, "
+            f"pick_source={self.selected_pick_source or '<none>'}, "
+            f"place_source={self.selected_place_source or '<none>'}, {self.last_debug}"
         )
 
 

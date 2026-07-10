@@ -28,6 +28,50 @@ DEFAULT_ALIASES = {
     "빨강 캔": "red can",
     "빨간 통조림": "red can",
     "빨간색 통조림": "red can",
+    "blue box": "blue box",
+    "blue bin": "blue box",
+    "blue container": "blue box",
+    "파란 박스": "blue box",
+    "파란색 박스": "blue box",
+    "파랑 박스": "blue box",
+    "파란 상자": "blue box",
+    "파란색 상자": "blue box",
+    "red box": "red box",
+    "red bin": "red box",
+    "red container": "red box",
+    "빨간 박스": "red box",
+    "빨간색 박스": "red box",
+    "빨강 박스": "red box",
+    "빨간 상자": "red box",
+    "빨간색 상자": "red box",
+    "yellow box": "yellow box",
+    "yellow bin": "yellow box",
+    "yellow container": "yellow box",
+    "yellow tray": "yellow box",
+    "노란 박스": "yellow box",
+    "노란색 박스": "yellow box",
+    "노랑 박스": "yellow box",
+    "노란 상자": "yellow box",
+    "노란색 상자": "yellow box",
+    "노란 트레이": "yellow box",
+    "노란색 트레이": "yellow box",
+    "노란 쟁반": "yellow box",
+    "노란색 쟁반": "yellow box",
+    "pink box": "pink box",
+    "pink bin": "pink box",
+    "pink container": "pink box",
+    "pink tray": "pink box",
+    "분홍 박스": "pink box",
+    "분홍색 박스": "pink box",
+    "핑크 박스": "pink box",
+    "분홍 상자": "pink box",
+    "분홍색 상자": "pink box",
+    "핑크 상자": "pink box",
+    "분홍 트레이": "pink box",
+    "분홍색 트레이": "pink box",
+    "핑크 트레이": "pink box",
+    "분홍 쟁반": "pink box",
+    "분홍색 쟁반": "pink box",
     "캔": "can",
     "통조림": "can",
     "토마토캔": "can",
@@ -51,6 +95,14 @@ DEFAULT_ALIASES = {
     "cup": "mug",
     "머그": "mug",
     "컵": "mug",
+    "green cup": "green cup",
+    "green mug": "green cup",
+    "초록 컵": "green cup",
+    "초록색 컵": "green cup",
+    "녹색 컵": "green cup",
+    "초록 머그": "green cup",
+    "초록색 머그": "green cup",
+    "녹색 머그": "green cup",
 }
 
 
@@ -68,7 +120,21 @@ class NaturalLanguageTaskParser(Node):
         self.declare_parameter("request_timeout_sec", 5.0)
         self.declare_parameter(
             "allowed_objects",
-            ["can", "blue can", "red can", "box", "dish", "apple", "bottle", "mug"],
+            [
+                "can",
+                "blue can",
+                "red can",
+                "box",
+                "blue box",
+                "red box",
+                "yellow box",
+                "pink box",
+                "dish",
+                "apple",
+                "bottle",
+                "mug",
+                "green cup",
+            ],
         )
         self.declare_parameter("alias_map_json", "{}")
         self.declare_parameter("use_ollama", True)
@@ -102,7 +168,7 @@ class NaturalLanguageTaskParser(Node):
         )
 
     def _load_aliases(self, alias_map_json: str) -> dict[str, str]:
-        aliases = dict(DEFAULT_ALIASES)
+        aliases = self._load_default_aliases()
         try:
             extra = json.loads(alias_map_json) if alias_map_json.strip() else {}
         except json.JSONDecodeError as exc:
@@ -112,6 +178,10 @@ class NaturalLanguageTaskParser(Node):
             for alias, canonical in extra.items():
                 aliases[str(alias).strip().lower()] = str(canonical).strip().lower()
         return aliases
+
+    @staticmethod
+    def _load_default_aliases() -> dict[str, str]:
+        return dict(DEFAULT_ALIASES)
 
     def on_natural_language_task(self, msg: String) -> None:
         text = msg.data.strip()

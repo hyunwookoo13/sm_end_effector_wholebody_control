@@ -65,12 +65,14 @@ arm_yaw_rho_z_position_controller:
     arm_switching_alpha: 10.0
     arm_blend_exponent: 0.5
     base_yaw_tolerance: 0.08
-    k_base_yaw: 3.2
+    k_base_yaw: 2.0
     k_base_linear: 2.4
-    max_base_yaw_rate: 2.8
+    max_base_yaw_rate: 1.4
     max_base_linear: 1.0
     enable_base_motion: false
     hold_wrist_during_place: true
+    grasp_orientation_wrist_mode: link6
+    grasp_link6_orientation_offset: 0.0
 
     # Joint safety position limits in radians.
     # joint1: -40 to 40 deg, joint2: -90 to 70 deg, joint3: -60 to 160 deg.

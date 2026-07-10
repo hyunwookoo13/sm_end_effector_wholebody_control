@@ -1,10 +1,6 @@
-import os
-
-from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -12,44 +8,87 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    grasping_share = get_package_share_directory("sm_grasping_ros2")
-
-    pick_perception_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                grasping_share,
-                "launch",
-                "rsd455_florence_grasping.launch.py",
-            )
-        ),
-        launch_arguments={
-            "florence_config_file": LaunchConfiguration("pick_florence_config_file"),
-            "grasping_config_file": LaunchConfiguration("grasping_config_file"),
-            "publish_fixed_camera_tf": LaunchConfiguration("publish_fixed_camera_tf"),
-        }.items(),
+    camera_tf_node = Node(
+        package="ee_switch_debug",
+        executable="fixed_camera_tf_publisher",
+        name="rsd455_fixed_camera_tf_publisher",
+        output="screen",
+        emulate_tty=True,
+        condition=IfCondition(LaunchConfiguration("publish_fixed_camera_tf")),
+        parameters=[
+            {
+                "use_sim_time": True,
+                "parent_frame": "world",
+                "child_frame": LaunchConfiguration("pick_camera_frame"),
+                "isaac_x": -0.04447,
+                "isaac_y": 3.46295,
+                "isaac_z": 1.25048,
+                "mapping": "isaac_y_to_ros_x",
+                "qx": 0.7071068,
+                "qy": 0.7071068,
+                "qz": 0.0,
+                "qw": 0.0,
+                "rate_hz": 30.0,
+            }
+        ],
     )
 
-    place_florence_node = Node(
+    pick_yoloe_node = Node(
         package="sm_florence_2_vlm_ros2",
-        executable="sm_florence_2_vlm_node",
-        name="sm_florence_2_vlm_place",
+        executable="sm_yoloe_vlm_node",
+        name="sm_yoloe_vlm",
         output="screen",
         emulate_tty=True,
         parameters=[
-            LaunchConfiguration("place_florence_config_file"),
+            LaunchConfiguration("pick_yoloe_config_file"),
             {
                 "use_sim_time": True,
-                "rgb_topic": "/rsd455/rgb2",
-                "depth_topic": "/rsd455/depth2",
-                "camera_info_topic": "/rsd455/camera_info2",
-                "target_objects_topic": "/sm_florence_2_vlm/target_objects",
+                "camera_frame": LaunchConfiguration("pick_camera_frame"),
+            },
+        ],
+    )
+
+    place_yoloe_node = Node(
+        package="sm_florence_2_vlm_ros2",
+        executable="sm_yoloe_vlm_node",
+        name="sm_yoloe_vlm_place",
+        output="screen",
+        emulate_tty=True,
+        parameters=[
+            LaunchConfiguration("place_yoloe_config_file"),
+            {
+                "use_sim_time": True,
                 "detections_topic": LaunchConfiguration("place_detections_topic"),
-                "debug_image_topic": "/sm_florence_2_vlm_place/debug/image",
-                "markers_topic": "/sm_florence_2_vlm_place/markers",
-                "roi_pointcloud_topic": "/sm_florence_2_vlm_place/roi_pointcloud",
                 "camera_frame": LaunchConfiguration("place_camera_frame"),
             },
         ],
+    )
+
+    pick_grasping_inference_node = Node(
+        package="sm_grasping_ros2",
+        executable="grasping_inference_node",
+        name="sm_grasping_inference",
+        output="screen",
+        emulate_tty=True,
+        parameters=[LaunchConfiguration("grasping_config_file")],
+    )
+
+    gripper_marker_node = Node(
+        package="sm_grasping_ros2",
+        executable="gripper_marker_node",
+        name="sm_gripper_marker",
+        output="screen",
+        emulate_tty=True,
+        parameters=[LaunchConfiguration("grasping_config_file")],
+    )
+
+    place_grasping_inference_node = Node(
+        package="sm_grasping_ros2",
+        executable="grasping_inference_node",
+        name="sm_grasping_inference_place",
+        output="screen",
+        emulate_tty=True,
+        parameters=[LaunchConfiguration("place_grasping_config_file")],
     )
 
     task_manager = Node(
@@ -70,6 +109,7 @@ def generate_launch_description():
                     value_type=bool,
                 ),
                 "place_detections_topic": LaunchConfiguration("place_detections_topic"),
+                "extra_grasp_topics": ["/sm_grasping_place/grasp_best"],
                 "place_offset_x": ParameterValue(
                     LaunchConfiguration("place_offset_x"),
                     value_type=float,
@@ -92,6 +132,10 @@ def generate_launch_description():
                 ),
                 "tf_timeout_sec": ParameterValue(
                     LaunchConfiguration("task_manager_tf_timeout_sec"),
+                    value_type=float,
+                ),
+                "fresh_grasp_delay_sec": ParameterValue(
+                    LaunchConfiguration("fresh_grasp_delay_sec"),
                     value_type=float,
                 ),
             }
@@ -122,10 +166,15 @@ def generate_launch_description():
                     "blue can",
                     "red can",
                     "box",
+                    "blue box",
+                    "red box",
+                    "yellow box",
+                    "pink box",
                     "dish",
                     "apple",
                     "bottle",
                     "mug",
+                    "green cup",
                 ],
             }
         ],
@@ -177,22 +226,22 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument(
-                "pick_florence_config_file",
+                "pick_yoloe_config_file",
                 default_value=PathJoinSubstitution(
                     [
                         FindPackageShare("sm_florence_2_vlm_ros2"),
                         "config",
-                        "sm_florence_2_vlm_rsd455.yaml",
+                        "sm_yoloe_vlm_rsd455.yaml",
                     ]
                 ),
             ),
             DeclareLaunchArgument(
-                "place_florence_config_file",
+                "place_yoloe_config_file",
                 default_value=PathJoinSubstitution(
                     [
                         FindPackageShare("sm_florence_2_vlm_ros2"),
                         "config",
-                        "sm_florence_2_vlm_rsd455_place.yaml",
+                        "sm_yoloe_vlm_rsd455_place.yaml",
                     ]
                 ),
             ),
@@ -203,6 +252,16 @@ def generate_launch_description():
                         FindPackageShare("sm_grasping_ros2"),
                         "config",
                         "sm_grasping_isaac.yaml",
+                    ]
+                ),
+            ),
+            DeclareLaunchArgument(
+                "place_grasping_config_file",
+                default_value=PathJoinSubstitution(
+                    [
+                        FindPackageShare("sm_grasping_ros2"),
+                        "config",
+                        "sm_grasping_isaac_place.yaml",
                     ]
                 ),
             ),
@@ -222,6 +281,7 @@ def generate_launch_description():
             DeclareLaunchArgument("enable_base_motion", default_value="true"),
             DeclareLaunchArgument("publish_fixed_camera_tf", default_value="false"),
             DeclareLaunchArgument("target_parent_frame", default_value="odom"),
+            DeclareLaunchArgument("pick_camera_frame", default_value="rsd455_color_optical_frame"),
             DeclareLaunchArgument("place_camera_frame", default_value="rsd455_color_optical_frame2"),
             DeclareLaunchArgument("place_detections_topic", default_value="/sm_florence_2_vlm_place/detections"),
             DeclareLaunchArgument("grasp_offset_z", default_value="0.03"),
@@ -236,13 +296,18 @@ def generate_launch_description():
             DeclareLaunchArgument("task_manager_rate_hz", default_value="30.0"),
             DeclareLaunchArgument("target_objects_publish_period", default_value="1.0"),
             DeclareLaunchArgument("task_manager_tf_timeout_sec", default_value="0.1"),
+            DeclareLaunchArgument("fresh_grasp_delay_sec", default_value="0.35"),
             DeclareLaunchArgument("enable_natural_language_task_parser", default_value="true"),
             DeclareLaunchArgument("natural_language_task_topic", default_value="/natural_language_task"),
             DeclareLaunchArgument("use_local_llm", default_value="true"),
             DeclareLaunchArgument("local_llm_model", default_value="gemma3:1b"),
             DeclareLaunchArgument("ollama_url", default_value="http://127.0.0.1:11434/api/chat"),
-            pick_perception_launch,
-            place_florence_node,
+            camera_tf_node,
+            pick_yoloe_node,
+            place_yoloe_node,
+            pick_grasping_inference_node,
+            gripper_marker_node,
+            place_grasping_inference_node,
             task_manager,
             natural_language_task_parser,
             controller,

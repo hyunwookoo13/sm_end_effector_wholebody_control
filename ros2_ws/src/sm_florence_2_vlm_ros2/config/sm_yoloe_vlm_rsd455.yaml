@@ -1,0 +1,56 @@
+sm_yoloe_vlm:
+  ros__parameters:
+    rgb_topic: "/rsd455/rgb"
+    depth_topic: "/rsd455/depth"
+    camera_info_topic: "/rsd455/camera_info"
+    pointcloud_topic: ""
+
+    target_objects: []
+    target_objects_topic: "/sm_florence_2_vlm/target_objects"
+    use_target_objects_topic: true
+    detections_topic: "/sm_florence_2_vlm/detections"
+    debug_image_topic: "/sm_florence_2_vlm/debug/image"
+    markers_topic: "/sm_florence_2_vlm/markers"
+    roi_pointcloud_topic: "/sm_florence_2_vlm/roi_pointcloud"
+
+    model_path: "/home/kiro/Desktop/hw_ws/ros2_ws/src/yoloe-26l/yoloe-26l-seg.pt"
+    device: "auto"
+    confidence_threshold: 0.05
+    iou_threshold: 0.5
+    imgsz: 960
+    min_color_score: 0.08
+    min_mask_area_px: 40
+    max_mask_area_ratio: 0.22
+    max_bbox_area_ratio: 0.25
+    box_min_mask_area_ratio: 0.015
+    select_best_per_target: true
+
+    publish_debug_image: true
+    publish_markers: true
+    publish_roi_pointcloud: true
+
+    queue_size: 10
+    sync_slop: 0.05
+
+    depth_scale: 0.001
+    min_depth_m: 0.2
+    max_depth_m: 10.0
+    roi_depth_inner_scale: 0.6
+    roi_depth_percentile: 35.0
+    roi_depth_band_m: 0.03
+    roi_depth_segmentation_min_area_px: 10
+    roi_depth_segmentation_kernel_px: 1
+
+    camera_frame: "rsd455_color_optical_frame"
+    target_frame: "world"
+    use_tf_transform: true
+    tf_timeout_sec: 0.2
+    tf_use_latest_transform: true
+
+    inference_rate_hz: 5.0
+    drop_old_frames: true
+    publish_last_detection_when_no_update: false
+    enable_perf_log: true
+    perf_log_interval_sec: 2.0
+    roi_pointcloud_source: "depth"
+    roi_pointcloud_require_organized: false
