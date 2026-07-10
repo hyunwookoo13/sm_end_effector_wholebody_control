@@ -40,6 +40,15 @@ def sanitize_candidate_openings(
     return sanitized, oversized
 
 
+def apply_radial_xy_offset(position: np.ndarray, offset_m: float) -> np.ndarray:
+    adjusted = np.asarray(position, dtype=float).copy()
+    radius = float(np.linalg.norm(adjusted[:2]))
+    if radius <= 1e-9 or abs(float(offset_m)) <= 1e-12:
+        return adjusted
+    adjusted[:2] += float(offset_m) * adjusted[:2] / radius
+    return adjusted
+
+
 class AnyGraspInferenceNode(Node):
     """ROI 포인트클라우드 기반 GPD 추론 노드."""
 
@@ -73,6 +82,7 @@ class AnyGraspInferenceNode(Node):
         self._wrapper = GpdWrapper(
             logger=self.get_logger(),
             default_opening_m=self.p_gpd_default_opening_m,
+            lateral_backoff_m=self.p_heuristic_lateral_backoff_m,
         )
         self.add_on_set_parameters_callback(self._on_set_parameters)
         self.create_timer(1.0 / max(0.1, self.p_inference_rate_hz), self._on_timer)
@@ -100,6 +110,7 @@ class AnyGraspInferenceNode(Node):
         self.declare_parameter("gpd_num_samples", 400)
         self.declare_parameter("gpd_num_threads", 4)
         self.declare_parameter("gpd_default_opening_m", 0.04)
+        self.declare_parameter("heuristic_lateral_backoff_m", 0.0)
         self.declare_parameter("gripper.opening_margin_m", 0.005)
         self.declare_parameter("gripper.opening_width_percentile_low", 5.0)
         self.declare_parameter("gripper.opening_width_percentile_high", 95.0)
@@ -109,6 +120,7 @@ class AnyGraspInferenceNode(Node):
         self.declare_parameter("grasp_z_offset_m", 0.0)
         self.declare_parameter("gpd_additional_rpy_deg", [0.0, 0.0, 0.0])  # roll, pitch, yaw
         self.declare_parameter("base_offset_xyz_m", [0.0, 0.0, 0.0])  # target_frame(base_link) 기준
+        self.declare_parameter("grasp_target_radial_offset_m", 0.0)
         self.declare_parameter("base_additional_rpy_deg", [0.0, 0.0, 0.0])  # target_frame(base_link) 기준
         self.declare_parameter("target_frame_yaw_only", True)  # base_link 기준 객체 yaw만 추종
         self.declare_parameter("target_frame_apply_fixed_roll_pitch", True)  # yaw_only에서 고정 roll/pitch 보정 적용
@@ -142,6 +154,7 @@ class AnyGraspInferenceNode(Node):
         self.p_gpd_num_samples = int(gp("gpd_num_samples").value)
         self.p_gpd_num_threads = int(gp("gpd_num_threads").value)
         self.p_gpd_default_opening_m = float(gp("gpd_default_opening_m").value)
+        self.p_heuristic_lateral_backoff_m = float(gp("heuristic_lateral_backoff_m").value)
         self.p_opening_margin_m = float(gp("gripper.opening_margin_m").value)
         self.p_opening_width_percentile_low = float(gp("gripper.opening_width_percentile_low").value)
         self.p_opening_width_percentile_high = float(gp("gripper.opening_width_percentile_high").value)
@@ -151,6 +164,7 @@ class AnyGraspInferenceNode(Node):
         self.p_grasp_z_offset_m = float(gp("grasp_z_offset_m").value)
         self.p_gpd_additional_rpy_deg = np.array(gp("gpd_additional_rpy_deg").value, dtype=float)
         self.p_base_offset_xyz_m = np.array(gp("base_offset_xyz_m").value, dtype=float)
+        self.p_grasp_target_radial_offset_m = float(gp("grasp_target_radial_offset_m").value)
         self.p_base_additional_rpy_deg = np.array(gp("base_additional_rpy_deg").value, dtype=float)
         self.p_target_frame_yaw_only = bool(gp("target_frame_yaw_only").value)
         self.p_target_frame_apply_fixed_roll_pitch = bool(gp("target_frame_apply_fixed_roll_pitch").value)
@@ -182,10 +196,15 @@ class AnyGraspInferenceNode(Node):
                     self.p_gpd_to_robot_quaternion = np.array(p.value, dtype=float)
                 elif p.name == "grasp_z_offset_m":
                     self.p_grasp_z_offset_m = float(p.value)
+                elif p.name == "heuristic_lateral_backoff_m":
+                    self.p_heuristic_lateral_backoff_m = float(p.value)
+                    self._wrapper.lateral_backoff_m = self.p_heuristic_lateral_backoff_m
                 elif p.name == "gpd_additional_rpy_deg":
                     self.p_gpd_additional_rpy_deg = np.array(p.value, dtype=float)
                 elif p.name == "base_offset_xyz_m":
                     self.p_base_offset_xyz_m = np.array(p.value, dtype=float)
+                elif p.name == "grasp_target_radial_offset_m":
+                    self.p_grasp_target_radial_offset_m = float(p.value)
                 elif p.name == "base_additional_rpy_deg":
                     self.p_base_additional_rpy_deg = np.array(p.value, dtype=float)
                 elif p.name == "target_frame_yaw_only":
@@ -379,6 +398,12 @@ class AnyGraspInferenceNode(Node):
                     return
             # base_link(target_frame) 기준 위치/회전 보정
             if best.header.frame_id == self.p_target_frame:
+                corrected_position = apply_radial_xy_offset(
+                    np.array([best.pose.position.x, best.pose.position.y, best.pose.position.z], dtype=float),
+                    self.p_grasp_target_radial_offset_m,
+                )
+                best.pose.position.x = float(corrected_position[0])
+                best.pose.position.y = float(corrected_position[1])
                 best.pose.position.x += float(self.p_base_offset_xyz_m[0])
                 best.pose.position.y += float(self.p_base_offset_xyz_m[1])
                 best.pose.position.z += float(self.p_base_offset_xyz_m[2])
