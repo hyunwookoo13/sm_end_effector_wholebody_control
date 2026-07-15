@@ -8,6 +8,8 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
+    nav2_condition = IfCondition(LaunchConfiguration("enable_nav2"))
+
     camera_tf_node = Node(
         package="ee_switch_debug",
         executable="fixed_camera_tf_publisher",
@@ -138,6 +140,117 @@ def generate_launch_description():
                     LaunchConfiguration("fresh_grasp_delay_sec"),
                     value_type=float,
                 ),
+                "enable_navigation": ParameterValue(
+                    LaunchConfiguration("enable_nav2"),
+                    value_type=bool,
+                ),
+                "navigation_base_frame": "chassis_link",
+                "pick_standoff_m": ParameterValue(
+                    LaunchConfiguration("pick_standoff_m"),
+                    value_type=float,
+                ),
+                "place_standoff_m": ParameterValue(
+                    LaunchConfiguration("place_standoff_m"),
+                    value_type=float,
+                ),
+                "place_direct_approach_distance_m": ParameterValue(
+                    LaunchConfiguration("place_direct_approach_distance_m"),
+                    value_type=float,
+                ),
+                "enable_hybrid_handoff": ParameterValue(
+                    LaunchConfiguration("enable_hybrid_handoff"),
+                    value_type=bool,
+                ),
+                "hybrid_outer_distance_m": ParameterValue(
+                    LaunchConfiguration("hybrid_outer_distance_m"),
+                    value_type=float,
+                ),
+                "hybrid_inner_distance_m": ParameterValue(
+                    LaunchConfiguration("hybrid_inner_distance_m"),
+                    value_type=float,
+                ),
+            }
+        ],
+    )
+
+    navigation_cmd_mux = Node(
+        package="ee_switch_debug",
+        executable="navigation_cmd_mux",
+        name="navigation_cmd_mux",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": True,
+                "max_linear_velocity_mps": ParameterValue(
+                    LaunchConfiguration("mux_max_linear_velocity_mps"),
+                    value_type=float,
+                ),
+                "max_angular_velocity_rps": ParameterValue(
+                    LaunchConfiguration("mux_max_angular_velocity_rps"),
+                    value_type=float,
+                ),
+                "max_linear_acceleration_mps2": ParameterValue(
+                    LaunchConfiguration("mux_max_linear_acceleration_mps2"),
+                    value_type=float,
+                ),
+                "max_angular_acceleration_rps2": ParameterValue(
+                    LaunchConfiguration("mux_max_angular_acceleration_rps2"),
+                    value_type=float,
+                ),
+            }
+        ],
+    )
+
+    nav2_controller = Node(
+        package="nav2_controller",
+        executable="controller_server",
+        name="controller_server",
+        output="screen",
+        condition=nav2_condition,
+        parameters=[LaunchConfiguration("nav2_params_file")],
+        remappings=[("cmd_vel", "/cmd_vel_navigation")],
+    )
+    nav2_planner = Node(
+        package="nav2_planner",
+        executable="planner_server",
+        name="planner_server",
+        output="screen",
+        condition=nav2_condition,
+        parameters=[LaunchConfiguration("nav2_params_file")],
+    )
+    nav2_behaviors = Node(
+        package="nav2_behaviors",
+        executable="behavior_server",
+        name="behavior_server",
+        output="screen",
+        condition=nav2_condition,
+        parameters=[LaunchConfiguration("nav2_params_file")],
+        remappings=[("cmd_vel", "/cmd_vel_navigation")],
+    )
+    nav2_bt_navigator = Node(
+        package="nav2_bt_navigator",
+        executable="bt_navigator",
+        name="bt_navigator",
+        output="screen",
+        condition=nav2_condition,
+        parameters=[LaunchConfiguration("nav2_params_file")],
+    )
+    nav2_lifecycle_manager = Node(
+        package="nav2_lifecycle_manager",
+        executable="lifecycle_manager",
+        name="lifecycle_manager_navigation",
+        output="screen",
+        condition=nav2_condition,
+        parameters=[
+            {
+                "use_sim_time": True,
+                "autostart": True,
+                "node_names": [
+                    "controller_server",
+                    "planner_server",
+                    "behavior_server",
+                    "bt_navigator",
+                ],
             }
         ],
     )
@@ -191,6 +304,7 @@ def generate_launch_description():
             {
                 "use_sim_time": True,
                 "target_frame": "pick_place_target",
+                "cmd_topic": "/cmd_vel_manipulation",
                 "enable_base_motion": ParameterValue(
                     LaunchConfiguration("enable_base_motion"),
                     value_type=bool,
@@ -275,10 +389,27 @@ def generate_launch_description():
                     ]
                 ),
             ),
+            DeclareLaunchArgument(
+                "nav2_params_file",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("ee_switch_debug"), "config", "nav2_rolling_odom.yaml"]
+                ),
+            ),
             DeclareLaunchArgument("pick_object", default_value="can"),
             DeclareLaunchArgument("place_object", default_value="box"),
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("enable_base_motion", default_value="true"),
+            DeclareLaunchArgument("enable_nav2", default_value="false"),
+            DeclareLaunchArgument("pick_standoff_m", default_value="0.70"),
+            DeclareLaunchArgument("place_standoff_m", default_value="0.70"),
+            DeclareLaunchArgument("place_direct_approach_distance_m", default_value="1.20"),
+            DeclareLaunchArgument("enable_hybrid_handoff", default_value="true"),
+            DeclareLaunchArgument("hybrid_outer_distance_m", default_value="1.40"),
+            DeclareLaunchArgument("hybrid_inner_distance_m", default_value="0.85"),
+            DeclareLaunchArgument("mux_max_linear_velocity_mps", default_value="1.50"),
+            DeclareLaunchArgument("mux_max_angular_velocity_rps", default_value="1.40"),
+            DeclareLaunchArgument("mux_max_linear_acceleration_mps2", default_value="2.00"),
+            DeclareLaunchArgument("mux_max_angular_acceleration_rps2", default_value="2.00"),
             DeclareLaunchArgument("publish_fixed_camera_tf", default_value="false"),
             DeclareLaunchArgument("target_parent_frame", default_value="odom"),
             DeclareLaunchArgument("pick_camera_frame", default_value="rsd455_color_optical_frame"),
@@ -309,6 +440,12 @@ def generate_launch_description():
             gripper_marker_node,
             place_grasping_inference_node,
             task_manager,
+            navigation_cmd_mux,
+            nav2_controller,
+            nav2_planner,
+            nav2_behaviors,
+            nav2_bt_navigator,
+            nav2_lifecycle_manager,
             natural_language_task_parser,
             controller,
         ]

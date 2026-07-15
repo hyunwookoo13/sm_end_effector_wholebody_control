@@ -2,6 +2,7 @@ import numpy as np
 
 from sm_florence_2_vlm.yoloe_utils import (
     crop_mask_to_bbox,
+    estimate_mask_orientation,
     expand_yoloe_prompts,
     is_yoloe_geometry_valid,
     match_yoloe_detection_to_target,
@@ -143,3 +144,20 @@ def test_yoloe_candidate_reliability_prefers_plausible_box_over_tiny_false_posit
     )
 
     assert actual_box > tiny_can_like_box
+
+
+def test_estimate_mask_orientation_returns_continuous_major_axis_angle():
+    mask = np.zeros((80, 80), dtype=bool)
+    yy, xx = np.indices(mask.shape)
+    cx, cy = 40.0, 40.0
+    angle = np.deg2rad(63.0)
+    along = (xx - cx) * np.cos(angle) + (yy - cy) * np.sin(angle)
+    across = -(xx - cx) * np.sin(angle) + (yy - cy) * np.cos(angle)
+    mask[(np.abs(along) <= 26.0) & (np.abs(across) <= 5.0)] = True
+
+    orientation = estimate_mask_orientation(mask)
+
+    assert orientation is not None
+    assert abs(orientation["angle_rad"] - angle) < 0.04
+    assert orientation["confidence"] > 0.75
+    assert orientation["quaternion_xyzw"][2] != 0.0

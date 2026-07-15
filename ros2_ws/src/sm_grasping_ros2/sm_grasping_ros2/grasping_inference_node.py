@@ -41,6 +41,7 @@ def sanitize_candidate_openings(
 
 
 def apply_radial_xy_offset(position: np.ndarray, offset_m: float) -> np.ndarray:
+    """Offset a target along its chassis-frame radial direction."""
     adjusted = np.asarray(position, dtype=float).copy()
     radius = float(np.linalg.norm(adjusted[:2]))
     if radius <= 1e-9 or abs(float(offset_m)) <= 1e-12:
@@ -59,6 +60,8 @@ class AnyGraspInferenceNode(Node):
         self._latest_cloud: PointCloud2 | None = None
         self._is_inferencing = False
         self._ema_state = EmaFilterState()
+        self._target_key: tuple[str, ...] = ()
+        self._accept_cloud_after_ns = 0
 
         self._tf_buffer = tf2_ros.Buffer()
         self._tf_listener = tf2_ros.TransformListener(self._tf_buffer, self)
@@ -75,6 +78,12 @@ class AnyGraspInferenceNode(Node):
             self._cloud_callback,
             qos_profile_sensor_data,
         )
+        self.create_subscription(
+            String,
+            self.p_target_objects_topic,
+            self._target_objects_callback,
+            10,
+        )
 
         self._model_ready = True
         self._device = "cpu"
@@ -89,6 +98,8 @@ class AnyGraspInferenceNode(Node):
 
     def _declare_parameters(self) -> None:
         self.declare_parameter("input_roi_pointcloud_topic", "/sm_florence_2_vlm/roi_pointcloud")
+        self.declare_parameter("target_objects_topic", "/sm_florence_2_vlm/target_objects")
+        self.declare_parameter("target_change_settle_sec", 0.40)
         self.declare_parameter("output_grasp_candidates_topic", "/sm_grasping/grasp_candidates")
         self.declare_parameter("output_grasp_scores_topic", "/sm_grasping/grasp_scores")
         self.declare_parameter("output_grasp_openings_topic", "/sm_grasping/grasp_openings")
@@ -132,6 +143,10 @@ class AnyGraspInferenceNode(Node):
 
         gp = self.get_parameter
         self.p_input_roi_pointcloud_topic = gp("input_roi_pointcloud_topic").value
+        self.p_target_objects_topic = str(gp("target_objects_topic").value)
+        self.p_target_change_settle_sec = max(
+            0.0, float(gp("target_change_settle_sec").value)
+        )
         self.p_output_grasp_candidates_topic = gp("output_grasp_candidates_topic").value
         self.p_output_grasp_scores_topic = gp("output_grasp_scores_topic").value
         self.p_output_grasp_openings_topic = gp("output_grasp_openings_topic").value
@@ -154,7 +169,9 @@ class AnyGraspInferenceNode(Node):
         self.p_gpd_num_samples = int(gp("gpd_num_samples").value)
         self.p_gpd_num_threads = int(gp("gpd_num_threads").value)
         self.p_gpd_default_opening_m = float(gp("gpd_default_opening_m").value)
-        self.p_heuristic_lateral_backoff_m = float(gp("heuristic_lateral_backoff_m").value)
+        self.p_heuristic_lateral_backoff_m = float(
+            gp("heuristic_lateral_backoff_m").value
+        )
         self.p_opening_margin_m = float(gp("gripper.opening_margin_m").value)
         self.p_opening_width_percentile_low = float(gp("gripper.opening_width_percentile_low").value)
         self.p_opening_width_percentile_high = float(gp("gripper.opening_width_percentile_high").value)
@@ -175,8 +192,45 @@ class AnyGraspInferenceNode(Node):
         self.p_max_opening_m = float(gp("gripper.max_opening_m").value)
 
     def _cloud_callback(self, msg: PointCloud2) -> None:
+        if self.get_clock().now().nanoseconds < self._accept_cloud_after_ns:
+            return
         with self._lock:
             self._latest_cloud = msg
+
+    def _target_objects_callback(self, msg: String) -> None:
+        target_key = self._parse_roi_target_key(msg.data)
+        if not target_key or target_key == self._target_key:
+            return
+        self._target_key = target_key
+        self._accept_cloud_after_ns = self.get_clock().now().nanoseconds + int(
+            self.p_target_change_settle_sec * 1e9
+        )
+        with self._lock:
+            self._latest_cloud = None
+        self._ema_state = EmaFilterState()
+        self._wrapper.reset_tracking_state()
+        self.get_logger().warn(
+            f"Grasp target changed to {list(target_key)}; cleared stale ROI/EMA state"
+        )
+
+    @staticmethod
+    def _parse_roi_target_key(text: str) -> tuple[str, ...]:
+        raw = str(text or "").strip()
+        if not raw:
+            return ()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return tuple(token.strip().lower() for token in raw.split(",") if token.strip())
+        if isinstance(payload, dict):
+            values = payload.get("roi_target_objects", [])
+            if not isinstance(values, list) or not values:
+                values = payload.get("target_objects", [])
+        elif isinstance(payload, list):
+            values = payload
+        else:
+            values = []
+        return tuple(str(value).strip().lower() for value in values if str(value).strip())
 
     def _take_latest_cloud(self) -> PointCloud2 | None:
         with self._lock:
@@ -233,8 +287,10 @@ class AnyGraspInferenceNode(Node):
                 f"q_top_down={self.p_gpd_top_down_quaternion.tolist()}, "
                 f"q_gpd_to_robot={self.p_gpd_to_robot_quaternion.tolist()}, "
                 f"z_offset={self.p_grasp_z_offset_m}, "
+                f"lateral_backoff={self.p_heuristic_lateral_backoff_m}, "
                 f"rpy_deg={self.p_gpd_additional_rpy_deg.tolist()}, "
                 f"base_offset={self.p_base_offset_xyz_m.tolist()}, "
+                f"radial_offset={self.p_grasp_target_radial_offset_m}, "
                 f"base_rpy_deg={self.p_base_additional_rpy_deg.tolist()}"
             )
             return SetParametersResult(successful=True)
@@ -399,7 +455,14 @@ class AnyGraspInferenceNode(Node):
             # base_link(target_frame) 기준 위치/회전 보정
             if best.header.frame_id == self.p_target_frame:
                 corrected_position = apply_radial_xy_offset(
-                    np.array([best.pose.position.x, best.pose.position.y, best.pose.position.z], dtype=float),
+                    np.array(
+                        [
+                            best.pose.position.x,
+                            best.pose.position.y,
+                            best.pose.position.z,
+                        ],
+                        dtype=float,
+                    ),
                     self.p_grasp_target_radial_offset_m,
                 )
                 best.pose.position.x = float(corrected_position[0])

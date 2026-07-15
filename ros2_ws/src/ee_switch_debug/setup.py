@@ -37,6 +37,7 @@ setup(
             "mobile_target_controller = ee_switch_debug.mobile_target_controller:main",
             "natural_language_task_console = ee_switch_debug.natural_language_task_console:main",
             "natural_language_task_parser = ee_switch_debug.natural_language_task_parser:main",
+            "navigation_cmd_mux = ee_switch_debug.navigation_cmd_mux:main",
             "pick_place_task_manager = ee_switch_debug.pick_place_task_manager:main",
             "target_arm_ik_controller = ee_switch_debug.target_arm_ik_controller:main",
             "target_base_controller = ee_switch_debug.target_base_controller:main",

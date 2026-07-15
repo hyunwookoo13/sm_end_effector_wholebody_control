@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from math import atan2, cos, pi, sin
 from typing import Any
 
 import cv2
@@ -103,6 +104,51 @@ def crop_mask_to_bbox(mask: np.ndarray, bbox: dict[str, int], width: int, height
     if ymax < ymin:
         ymin, ymax = ymax, ymin
     return mask[ymin : ymax + 1, xmin : xmax + 1].astype(bool)
+
+
+def canonical_axis_angle(angle_rad: float) -> float:
+    """Normalize an undirected 2D object axis to [-pi/2, pi/2)."""
+    angle = (float(angle_rad) + pi) % (2.0 * pi) - pi
+    if angle >= pi / 2.0:
+        angle -= pi
+    elif angle < -pi / 2.0:
+        angle += pi
+    return angle
+
+
+def estimate_mask_orientation(
+    mask: np.ndarray | None,
+    min_area_px: int = 20,
+) -> dict[str, Any] | None:
+    if mask is None:
+        return None
+    mask_bool = np.asarray(mask).astype(bool)
+    ys, xs = np.nonzero(mask_bool)
+    if len(xs) < int(min_area_px):
+        return None
+
+    points = np.column_stack((xs.astype(float), ys.astype(float)))
+    centered = points - np.mean(points, axis=0)
+    covariance = np.cov(centered, rowvar=False)
+    if covariance.shape != (2, 2) or not np.all(np.isfinite(covariance)):
+        return None
+
+    values, vectors = np.linalg.eigh(covariance)
+    order = np.argsort(values)[::-1]
+    major_value = float(values[order[0]])
+    minor_value = float(values[order[1]])
+    if major_value <= 1e-9:
+        return None
+
+    major_axis = vectors[:, order[0]]
+    angle = canonical_axis_angle(atan2(float(major_axis[1]), float(major_axis[0])))
+    confidence = max(0.0, min(1.0, (major_value - minor_value) / max(major_value, 1e-9)))
+    half = 0.5 * angle
+    return {
+        "angle_rad": angle,
+        "confidence": confidence,
+        "quaternion_xyzw": (0.0, 0.0, sin(half), cos(half)),
+    }
 
 
 def is_yoloe_geometry_valid(

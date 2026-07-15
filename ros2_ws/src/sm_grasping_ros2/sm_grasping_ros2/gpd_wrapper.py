@@ -24,7 +24,12 @@ class GpdWrapper:
     기본값은 안전한 휴리스틱 후보 생성으로 동작한다.
     """
 
-    def __init__(self, logger, default_opening_m: float = 0.04, lateral_backoff_m: float = 0.0):
+    def __init__(
+        self,
+        logger,
+        default_opening_m: float = 0.04,
+        lateral_backoff_m: float = 0.0,
+    ):
         self.logger = logger
         self.default_opening_m = float(default_opening_m)
         self.lateral_backoff_m = float(lateral_backoff_m)
@@ -39,6 +44,10 @@ class GpdWrapper:
     @property
     def load_error(self) -> Optional[str]:
         return self._load_error
+
+    def reset_tracking_state(self) -> None:
+        """Forget orientation continuity when the requested object changes."""
+        self._last_yaw = None
 
     def infer(self, points_xyz: np.ndarray, max_candidates: int, lims: list[float]) -> list[GraspCandidate]:
         if points_xyz.size == 0:
@@ -87,7 +96,7 @@ class GpdWrapper:
         yaw = self._stabilize_yaw(yaw)
         q = self._yaw_to_quat_xyzw(yaw)
 
-        # 6. Top-down grasp는 ROI 중심을 사용한다.
+        # 6. 선택적 횡방향 보정. Top-down grasp는 기본적으로 ROI 중심을 사용한다.
         target = centroid.copy()
         target[0] -= closing_axis[0] * self.lateral_backoff_m
         target[1] -= closing_axis[1] * self.lateral_backoff_m
