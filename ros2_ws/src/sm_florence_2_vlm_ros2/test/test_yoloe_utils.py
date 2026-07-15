@@ -7,6 +7,7 @@ from sm_florence_2_vlm.yoloe_utils import (
     is_yoloe_geometry_valid,
     match_yoloe_detection_to_target,
     score_mask_colors,
+    suppress_cross_class_overlaps,
     yoloe_candidate_reliability,
 )
 
@@ -23,6 +24,11 @@ def test_expand_yoloe_prompts_keeps_plain_aliases_for_uncolored_targets():
     prompts = expand_yoloe_prompts(["box"])
 
     assert prompts[:3] == ["box", "tray", "plastic tray"]
+
+
+def test_expand_yoloe_prompts_adds_visual_confuser_for_single_fruit_target():
+    assert expand_yoloe_prompts(["apple"]) == ["apple", "orange"]
+    assert expand_yoloe_prompts(["orange"]) == ["orange", "apple"]
 
 
 def test_score_mask_colors_counts_only_masked_pixels():
@@ -144,6 +150,40 @@ def test_yoloe_candidate_reliability_prefers_plausible_box_over_tiny_false_posit
     )
 
     assert actual_box > tiny_can_like_box
+
+
+def test_cross_class_overlap_keeps_only_more_reliable_label():
+    apple = {
+        "object_name": "apple",
+        "bbox": {"xmin": 100, "ymin": 100, "xmax": 180, "ymax": 180},
+        "reliability": 0.57,
+    }
+    orange = {
+        "object_name": "orange",
+        "bbox": {"xmin": 103, "ymin": 102, "xmax": 181, "ymax": 182},
+        "reliability": 0.82,
+    }
+
+    selected = suppress_cross_class_overlaps([apple, orange], iou_threshold=0.60)
+
+    assert [candidate["object_name"] for candidate in selected] == ["orange"]
+
+
+def test_cross_class_overlap_preserves_spatially_separate_objects():
+    apple = {
+        "object_name": "apple",
+        "bbox": {"xmin": 20, "ymin": 20, "xmax": 80, "ymax": 80},
+        "reliability": 0.75,
+    }
+    orange = {
+        "object_name": "orange",
+        "bbox": {"xmin": 200, "ymin": 200, "xmax": 270, "ymax": 270},
+        "reliability": 0.80,
+    }
+
+    selected = suppress_cross_class_overlaps([apple, orange], iou_threshold=0.60)
+
+    assert {candidate["object_name"] for candidate in selected} == {"apple", "orange"}
 
 
 def test_estimate_mask_orientation_returns_continuous_major_axis_angle():

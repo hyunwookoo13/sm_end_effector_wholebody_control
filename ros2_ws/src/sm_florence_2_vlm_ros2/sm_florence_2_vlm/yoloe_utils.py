@@ -18,6 +18,14 @@ CLASS_ALIASES = {
     "bottle": ["bottle", "water bottle", "drink bottle"],
 }
 
+# Open-vocabulary detection still needs visually similar negative classes in the
+# prompt set.  They are used only for competition and are not published unless
+# the user explicitly requested them.
+CLASS_CONFUSERS = {
+    "apple": ["orange"],
+    "orange": ["apple"],
+}
+
 
 def split_semantic_target(name: str) -> tuple[str | None, str]:
     tokens = str(name).strip().lower().split()
@@ -44,6 +52,9 @@ def expand_yoloe_prompts(target_objects: list[str]) -> list[str]:
         for candidate in candidates:
             if candidate and candidate not in prompts:
                 prompts.append(candidate)
+        for confuser in CLASS_CONFUSERS.get(base_class, []):
+            if confuser and confuser not in prompts:
+                prompts.append(confuser)
     return prompts
 
 
@@ -199,6 +210,41 @@ def yoloe_candidate_reliability(
         mask_area_ratio = float(max(0, int(mask_area_px))) / float(image_area)
         score += min(mask_area_ratio, 0.20)
     return score
+
+
+def bbox_iou(first: dict[str, int], second: dict[str, int]) -> float:
+    """Return intersection-over-union for two inclusive pixel bboxes."""
+    xmin = max(int(first["xmin"]), int(second["xmin"]))
+    ymin = max(int(first["ymin"]), int(second["ymin"]))
+    xmax = min(int(first["xmax"]), int(second["xmax"]))
+    ymax = min(int(first["ymax"]), int(second["ymax"]))
+    intersection = max(0, xmax - xmin + 1) * max(0, ymax - ymin + 1)
+    first_area = max(0, int(first["xmax"]) - int(first["xmin"]) + 1) * max(
+        0, int(first["ymax"]) - int(first["ymin"]) + 1
+    )
+    second_area = max(0, int(second["xmax"]) - int(second["xmin"]) + 1) * max(
+        0, int(second["ymax"]) - int(second["ymin"]) + 1
+    )
+    union = first_area + second_area - intersection
+    return float(intersection) / float(union) if union > 0 else 0.0
+
+
+def suppress_cross_class_overlaps(
+    candidates: list[dict[str, Any]],
+    iou_threshold: float = 0.60,
+) -> list[dict[str, Any]]:
+    """Keep the most reliable label when different classes cover one object."""
+    kept: list[dict[str, Any]] = []
+    ordered = sorted(candidates, key=lambda item: float(item["reliability"]), reverse=True)
+    for candidate in ordered:
+        duplicate = any(
+            str(candidate["object_name"]) != str(selected["object_name"])
+            and bbox_iou(candidate["bbox"], selected["bbox"]) >= float(iou_threshold)
+            for selected in kept
+        )
+        if not duplicate:
+            kept.append(candidate)
+    return kept
 
 
 def score_mask_colors(image_bgr: np.ndarray, mask: np.ndarray | None) -> dict[str, Any]:

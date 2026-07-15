@@ -34,6 +34,7 @@ from sm_florence_2_vlm.yoloe_utils import (
     is_yoloe_geometry_valid,
     match_yoloe_detection_to_target,
     score_mask_colors,
+    suppress_cross_class_overlaps,
     yoloe_candidate_reliability,
 )
 
@@ -224,6 +225,7 @@ class YOLOEVLMNode(Node):
         self.declare_parameter("max_bbox_area_ratio", 0.25)
         self.declare_parameter("box_min_mask_area_ratio", 0.015)
         self.declare_parameter("select_best_per_target", True)
+        self.declare_parameter("cross_class_nms_iou_threshold", 0.60)
         self.declare_parameter("publish_debug_image", True)
         self.declare_parameter("publish_markers", True)
         self.declare_parameter("publish_roi_pointcloud", True)
@@ -274,6 +276,9 @@ class YOLOEVLMNode(Node):
         self.max_bbox_area_ratio = float(self.get_parameter("max_bbox_area_ratio").value)
         self.box_min_mask_area_ratio = float(self.get_parameter("box_min_mask_area_ratio").value)
         self.select_best_per_target = bool(self.get_parameter("select_best_per_target").value)
+        self.cross_class_nms_iou_threshold = float(
+            self.get_parameter("cross_class_nms_iou_threshold").value
+        )
         self.publish_debug_image = bool(self.get_parameter("publish_debug_image").value)
         self.publish_markers = bool(self.get_parameter("publish_markers").value)
         self.publish_roi_pointcloud = bool(self.get_parameter("publish_roi_pointcloud").value)
@@ -467,6 +472,18 @@ class YOLOEVLMNode(Node):
             current_roi_targets = list(self.roi_target_objects)
         t_before_detect = time.monotonic()
         raw_detections = self.detector.detect(rgb_bgr, current_targets)
+        # Suppress a requested label when a visually similar internal competitor
+        # (for example orange for an apple request) wins on the same object.
+        raw_detections = suppress_cross_class_overlaps(
+            [
+                {
+                    **detection,
+                    "reliability": float(detection["confidence"]),
+                }
+                for detection in raw_detections
+            ],
+            self.cross_class_nms_iou_threshold,
+        )
         t_after_detect = time.monotonic()
 
         objects = []
@@ -608,11 +625,12 @@ class YOLOEVLMNode(Node):
                 if roi_target_object:
                     roi_points.extend(candidate_points)
         if self.select_best_per_target:
-            for object_name, candidate in sorted(
-                best_candidate_by_name.items(),
-                key=lambda item: float(item[1]["reliability"]),
-                reverse=True,
-            ):
+            selected_candidates = suppress_cross_class_overlaps(
+                list(best_candidate_by_name.values()),
+                self.cross_class_nms_iou_threshold,
+            )
+            for candidate in selected_candidates:
+                object_name = str(candidate["object_name"])
                 object_id = f"{object_name}_0"
                 objects.append(
                     self._build_detection_object(

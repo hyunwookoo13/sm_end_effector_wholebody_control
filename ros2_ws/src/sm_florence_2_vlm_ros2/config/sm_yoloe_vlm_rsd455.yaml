@@ -24,6 +24,8 @@ sm_yoloe_vlm:
     max_bbox_area_ratio: 0.25
     box_min_mask_area_ratio: 0.015
     select_best_per_target: true
+    # 동일 물체에 서로 다른 클래스 bbox가 겹치면 reliability가 높은 하나만 유지합니다.
+    cross_class_nms_iou_threshold: 0.60
 
     publish_debug_image: true
     publish_markers: true
