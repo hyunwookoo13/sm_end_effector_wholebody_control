@@ -1,5 +1,36 @@
 # Pick and Place Launch Notes
 
+## Nav2 Obstacle-Aware Long-Range Mode
+
+The long-range launch can use both Isaac Sim lidars to build rolling costmaps in
+the `odom` frame. Nav2 drives to a standoff pose first, then the existing
+whole-body controller performs the final object-relative alignment.
+
+```bash
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py \
+  autostart:=false \
+  enable_nav2:=true
+```
+
+The natural-language console is unchanged:
+
+```bash
+ros2 run ee_switch_debug natural_language_task_console
+```
+
+Useful RViz displays are `/global_costmap/costmap`,
+`/local_costmap/costmap`, and `/plan`. The default pick and place base
+standoffs are both `0.70 m`; adjust them with `pick_standoff_m` and
+`place_standoff_m`. Set `enable_nav2:=false` to retain the previous direct
+whole-body approach.
+
+Nav2 publishes `/cmd_vel_navigation`, the manipulation controller publishes
+`/cmd_vel_manipulation`, and `navigation_cmd_mux` is the only node that
+publishes `/cmd_vel`.
+
 ## Near Pick and Place
 
 One workspace/table pick-and-place. This is the stable structure checkpointed on

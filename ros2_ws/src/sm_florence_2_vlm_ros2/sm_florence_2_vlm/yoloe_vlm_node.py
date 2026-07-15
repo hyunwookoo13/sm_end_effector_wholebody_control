@@ -29,6 +29,7 @@ from sm_florence_2_vlm.florence_2_vlm_node import (
 )
 from sm_florence_2_vlm.yoloe_utils import (
     crop_mask_to_bbox,
+    estimate_mask_orientation,
     expand_yoloe_prompts,
     is_yoloe_geometry_valid,
     match_yoloe_detection_to_target,
@@ -510,6 +511,7 @@ class YOLOEVLMNode(Node):
                 continue
             if roi_mask_used:
                 mask_overlays.append({"bbox": bbox, "mask": roi_mask.copy()})
+            mask_orientation = estimate_mask_orientation(roi_mask if roi_mask_used else None)
 
             object_name = semantic_match["target_name"]
             roi_target_object = self._is_roi_target_object(object_name, current_roi_targets)
@@ -570,6 +572,7 @@ class YOLOEVLMNode(Node):
                     "raw_object_name": raw_object_name,
                     "semantic_match": semantic_match,
                     "color_info": color_info,
+                    "mask_orientation": mask_orientation,
                     "points": candidate_points,
                     "roi_target_object": roi_target_object,
                     "overlay": {"bbox": bbox, "mask": roi_mask.copy()} if roi_mask_used else None,
@@ -599,6 +602,7 @@ class YOLOEVLMNode(Node):
                         raw_object_name,
                         semantic_match,
                         color_info,
+                        mask_orientation,
                     )
                 )
                 if roi_target_object:
@@ -627,6 +631,7 @@ class YOLOEVLMNode(Node):
                         str(candidate["raw_object_name"]),
                         candidate["semantic_match"],
                         candidate["color_info"],
+                        candidate["mask_orientation"],
                     )
                 )
                 if bool(candidate["roi_target_object"]):
@@ -736,10 +741,11 @@ class YOLOEVLMNode(Node):
         raw_object_name: str,
         semantic_match: dict[str, Any],
         color_info: dict[str, Any],
+        mask_orientation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         camera_pos = self._point_to_dict(camera_point, self.camera_frame)
         target_pos = self._point_to_dict(target_point, self.target_frame) if target_point else None
-        return {
+        obj = {
             "object_id": object_id,
             "object_name": object_name,
             "raw_object_name": raw_object_name,
@@ -757,6 +763,30 @@ class YOLOEVLMNode(Node):
             "roi_geometry_mode": "yoloe_mask" if roi_mask_used else "bbox",
             "roi_mask_used": bool(roi_mask_used),
             "roi_mask_area_px": int(roi_mask_area_px),
+        }
+        orientation = self._orientation_to_dict(mask_orientation, self.camera_frame)
+        if orientation is not None:
+            obj["orientation_camera_frame"] = orientation
+        return obj
+
+    @staticmethod
+    def _orientation_to_dict(
+        orientation: dict[str, Any] | None,
+        fallback_frame: str,
+    ) -> dict[str, Any] | None:
+        if not orientation:
+            return None
+        quaternion = orientation.get("quaternion_xyzw")
+        if not isinstance(quaternion, (list, tuple)) or len(quaternion) != 4:
+            return None
+        return {
+            "frame_id": fallback_frame,
+            "x": float(quaternion[0]),
+            "y": float(quaternion[1]),
+            "z": float(quaternion[2]),
+            "w": float(quaternion[3]),
+            "angle_rad": float(orientation.get("angle_rad", 0.0)),
+            "confidence": float(orientation.get("confidence", 0.0)),
         }
 
     @staticmethod

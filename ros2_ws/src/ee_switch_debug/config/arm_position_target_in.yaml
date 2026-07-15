@@ -89,6 +89,7 @@ arm_yaw_rho_z_position_controller:
     grasp_lift_speed: 0.3
     grasp_lift_height: 0.12
     grasp_descend_depth: 0.07
+    # Keep horizontal approach above the object; final descend height is unchanged.
     grasp_approach_clearance_z: 0.03
     grasp_close_duration: 0.1
     gripper_open_position: 0.0

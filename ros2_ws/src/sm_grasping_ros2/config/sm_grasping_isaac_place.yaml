@@ -1,6 +1,8 @@
 sm_grasping_inference_place:
   ros__parameters:
     input_roi_pointcloud_topic: "/sm_florence_2_vlm_place/roi_pointcloud"
+    target_objects_topic: "/sm_florence_2_vlm/target_objects"
+    target_change_settle_sec: 0.40
 
     output_grasp_candidates_topic: "/sm_grasping_place/grasp_candidates"
     output_grasp_scores_topic: "/sm_grasping_place/grasp_scores"
