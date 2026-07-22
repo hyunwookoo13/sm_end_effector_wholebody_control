@@ -20,6 +20,9 @@ class GraspTargetTfBridge(Node):
         self.declare_parameter("latch_target", False)
         self.declare_parameter("freeze_on_arm_track", False)
         self.declare_parameter("state_topic", "/arm_safety_state")
+        self.declare_parameter("freeze_on_pick_command", False)
+        self.declare_parameter("task_command_topic", "/arm_task_command")
+        self.declare_parameter("task_state_topic", "/arm_task_state")
         self.declare_parameter("offset_x", 0.0)
         self.declare_parameter("offset_y", 0.0)
         self.declare_parameter("offset_z", 0.08)
@@ -34,6 +37,13 @@ class GraspTargetTfBridge(Node):
             self.get_parameter("freeze_on_arm_track").value
         )
         self.state_topic = str(self.get_parameter("state_topic").value)
+        self.freeze_on_pick_command = bool(
+            self.get_parameter("freeze_on_pick_command").value
+        )
+        self.task_command_topic = str(
+            self.get_parameter("task_command_topic").value
+        )
+        self.task_state_topic = str(self.get_parameter("task_state_topic").value)
         self.offset_x = float(self.get_parameter("offset_x").value)
         self.offset_y = float(self.get_parameter("offset_y").value)
         self.offset_z = float(self.get_parameter("offset_z").value)
@@ -46,11 +56,26 @@ class GraspTargetTfBridge(Node):
         self.target_latched = False
         self.target_frozen = False
         self.control_state = ""
+        self.pick_freeze_requested = False
+        self.pick_snapshot_active = False
         self.last_debug = "waiting for grasp_best"
 
         self.create_subscription(PoseStamped, self.input_topic, self.on_grasp_best, 10)
         if self.freeze_on_arm_track:
             self.create_subscription(String, self.state_topic, self.on_control_state, 10)
+        if self.freeze_on_pick_command:
+            self.create_subscription(
+                String,
+                self.task_command_topic,
+                self.on_task_command,
+                10,
+            )
+            self.create_subscription(
+                String,
+                self.task_state_topic,
+                self.on_task_state,
+                10,
+            )
         self.create_timer(max(1.0 / max(rate_hz, 0.1), 0.01), self.on_timer)
         self.create_timer(1.0, self.on_log_timer)
 
@@ -58,11 +83,17 @@ class GraspTargetTfBridge(Node):
             f"Publishing grasp position TF: {self.parent_frame} -> {self.target_frame}, "
             f"source={self.input_topic}, offset=[{self.offset_x:.3f}, {self.offset_y:.3f}, {self.offset_z:.3f}], "
             f"latch_target={self.latch_target}, "
-            f"freeze_on_arm_track={self.freeze_on_arm_track}"
+            f"freeze_on_arm_track={self.freeze_on_arm_track}, "
+            f"freeze_on_pick_command={self.freeze_on_pick_command}"
         )
 
     def on_grasp_best(self, msg: PoseStamped) -> None:
         if self.target_latched or self.target_frozen:
+            if self.pick_snapshot_active:
+                self.get_logger().debug(
+                    f"Ignored later grasp update; {self.target_frame} is locked "
+                    "to the first valid post-PICK sample"
+                )
             return
 
         source_frame = msg.header.frame_id
@@ -127,8 +158,55 @@ class GraspTargetTfBridge(Node):
             f"y={transform.transform.translation.y:.3f}, "
             f"z={transform.transform.translation.z:.3f} in {self.parent_frame}"
         )
+        if self.pick_freeze_requested:
+            self.target_frozen = True
+            self.pick_snapshot_active = True
+            self.pick_freeze_requested = False
+            rotation = self.latest_transform.transform.rotation
+            self.get_logger().info(
+                f"Locked first post-PICK {self.target_frame}: {self.last_debug}, "
+                f"q=[{rotation.x:.4f}, {rotation.y:.4f}, "
+                f"{rotation.z:.4f}, {rotation.w:.4f}]"
+            )
         if self.target_latched:
             self.get_logger().info(f"Latched {self.target_frame}: {self.last_debug}")
+
+    def begin_pick_snapshot(self) -> None:
+        """Invalidate prior task data and wait for one fresh grasp sample."""
+        self.latest_transform = None
+        self.target_latched = False
+        self.target_frozen = False
+        self.pick_snapshot_active = False
+        self.pick_freeze_requested = True
+        self.latest_update_time = self.get_clock().now()
+        self.last_debug = "waiting for first valid grasp after PICK"
+        self.get_logger().warn(
+            f"Invalidated previous {self.target_frame}; "
+            "waiting for first valid grasp after PICK"
+        )
+
+    def on_task_command(self, msg: String) -> None:
+        command = msg.data.strip().upper()
+        if command == "PICK":
+            self.begin_pick_snapshot()
+        elif command == "RESET":
+            self.release_pick_snapshot("RESET command")
+
+    def on_task_state(self, msg: String) -> None:
+        state = msg.data.strip().upper()
+        if state in ("PICK:HOLD", "PICK:DONE"):
+            self.release_pick_snapshot(state)
+
+    def release_pick_snapshot(self, reason: str) -> None:
+        if not (self.pick_snapshot_active or self.pick_freeze_requested):
+            return
+        self.pick_snapshot_active = False
+        self.pick_freeze_requested = False
+        self.target_frozen = False
+        self.latest_update_time = self.get_clock().now()
+        self.get_logger().info(
+            f"Released PICK snapshot for {self.target_frame}: {reason}"
+        )
 
     def on_control_state(self, msg: String) -> None:
         state = msg.data.strip()
@@ -137,6 +215,10 @@ class GraspTargetTfBridge(Node):
         self.control_state = state
 
         if state == "ARM_TRACK":
+            if self.pick_freeze_requested:
+                self.last_debug = "ARM_TRACK waiting for first valid grasp after PICK"
+                self.get_logger().warn(self.last_debug)
+                return
             if self.latest_transform is None:
                 self.last_debug = "ARM_TRACK requested freeze, but no grasp target exists"
                 self.get_logger().warn(self.last_debug)
@@ -145,7 +227,11 @@ class GraspTargetTfBridge(Node):
             self.get_logger().info(
                 f"Frozen {self.target_frame} for ARM_TRACK: {self.last_debug}"
             )
-        elif state == "RETURN_HOME" and self.target_frozen:
+        elif (
+            state == "RETURN_HOME"
+            and self.target_frozen
+            and not self.pick_snapshot_active
+        ):
             self.target_frozen = False
             self.latest_update_time = self.get_clock().now()
             self.get_logger().info(

@@ -120,7 +120,7 @@ def test_fresh_grasp_gate_rejects_early_and_old_stamped_grasps():
     assert manager.is_fresh_grasp_message(new_stamped, now_ns=16_000)
 
 
-def test_pick_detection_orientation_overrides_grasp_orientation():
+def test_grasp_best_orientation_is_preserved_over_detection_orientation():
     manager = make_manager_without_ros_node()
     manager.phase = "FIND_PICK"
 
@@ -143,6 +143,6 @@ def test_pick_detection_orientation_overrides_grasp_orientation():
     assert manager.pick_transform == {
         "source_frame": "chassis_link",
         "position": (0.4, 0.1, 0.7),
-        "orientation": approx((0.0, 0.0, 0.5, 0.8660254)),
-        "orientation_frame": "rsd455_color_optical_frame",
+        "orientation": approx((0.0, 0.0, 0.0, 1.0)),
+        "orientation_frame": None,
     }

@@ -418,10 +418,6 @@ class PickPlaceTaskManager(Node):
             float(msg.pose.orientation.z),
             float(msg.pose.orientation.w),
         )
-        orientation_frame = None
-        cached_orientation = self.pick_orientation_for_grasp_source(source_topic)
-        if cached_orientation is not None:
-            orientation_frame, orientation = cached_orientation
         transform = self.pose_to_parent_transform(
             source_frame=msg.header.frame_id,
             position=(
@@ -430,7 +426,7 @@ class PickPlaceTaskManager(Node):
                 float(msg.pose.position.z) + self.pick_offset[2],
             ),
             orientation=orientation,
-            orientation_frame=orientation_frame,
+            orientation_frame=None,
         )
         if transform is None:
             return
