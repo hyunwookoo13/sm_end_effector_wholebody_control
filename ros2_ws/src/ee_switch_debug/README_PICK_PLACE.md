@@ -1,5 +1,67 @@
 # Pick and Place Launch Notes
 
+## Fixed Top-Down Grasp Test
+
+This launch uses YOLOE plus `sm_grasping_ros2`, freezes the first fresh grasp
+after `PICK`, solves one complete six-axis plan, and executes:
+
+```text
+SMOOTH APPROACH -> FIXED-ORIENTATION DESCEND -> GRASP
+    -> FIXED-ORIENTATION LIFT -> SMOOTH HOME -> HOLD
+```
+
+The mobile base remains fixed. The planner searches for the closest-to-top-down
+orientation that is reachable both 10 cm above the object and at the grasp
+point. For the recorded current-distance geometry this is approximately 24
+degrees from exact top-down. DESCEND and LIFT keep that one orientation instead
+of rotating the wrist near the object.
+
+The approach and descent are both computed once
+from the first post-`PICK` snapshot, so later mask or marker motion cannot steer
+the arm. A 2.5 cm inward radial correction compensates the grasp generator's
+outward offset. APPROACH, DESCEND, LIFT, and HOME use bounded time-scaled
+trajectories with no intermediate waypoint stops. APPROACH, LIFT, and HOME use a compact
+cubic S-curve to reduce visually stationary starts and finishes, while DESCEND
+keeps the minimum-jerk quintic profile. The dedicated launch velocity limits,
+1.6 rad/s^2 acceleration limit, and 0.6 s minimum duration are unchanged. The
+dedicated test launch accepts up to
+0.050 rad measured-joint error at the non-contact APPROACH, LIFT, and HOME
+endpoints to avoid multi-second actuator-settling pauses. DESCEND remains strict
+at 0.025 rad before the gripper closes. Each semantic segment still reaches zero
+endpoint velocity before the next stage; a new recording is required to verify
+the resulting duration and visual naturalness for each target pose.
+
+After GRASP, LIFT remains on the validated vertical path until the measured EE
+is 6 cm above the planned grasp pose. It then hands its bounded joint velocity
+directly to the acceleration-limited HOME controller, so the arm curves toward
+HOME without stopping at the handoff. This velocity preservation applies only
+to LIFT-to-HOME; APPROACH still stops and verifies alignment before DESCEND.
+
+```bash
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch ee_switch_debug yoloe_top_down_grasp_test.launch.py
+```
+
+In another terminal, select the detected class and issue one pick:
+
+```bash
+ros2 topic pub --once /sm_florence_2_vlm/target_objects \
+  std_msgs/msg/String "{data: 'can'}"
+ros2 topic pub --once /arm_task_command std_msgs/msg/String "{data: 'PICK'}"
+```
+
+Watch `/arm_task_state` for `PICK:APPROACH`, `PICK:DESCEND`, `PICK:GRASP`,
+`PICK:LIFT`, `PICK:HOME`, and `PICK:HOLD`. `PICK:PLAN_FAILED` means no common
+fixed orientation met the configured workspace, joint-envelope, or descent-path
+limits. The arm deliberately holds instead of falling back to reactive position
+correction.
+
+The grasp marker and OMY EE use different local axes. The planner converts the
+marker's `+X` approach and `+Y` closing axes to the OMY EE's `-Y` approach and
+`+X` closing axes before solving IK.
+
 ## Nav2 Obstacle-Aware Long-Range Mode
 
 The long-range launch can use both Isaac Sim lidars to build rolling costmaps in

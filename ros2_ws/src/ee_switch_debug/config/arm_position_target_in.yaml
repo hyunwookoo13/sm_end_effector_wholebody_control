@@ -71,13 +71,75 @@ arm_yaw_rho_z_position_controller:
     max_base_linear: 1.0
     enable_base_motion: false
     hold_wrist_during_place: true
-    grasp_orientation_wrist_mode: link6
+    # 실제 로봇용 단계별 속도/가속도 제한입니다.
+    position_stage_yaw_velocity: 0.35
+    position_stage_joint2_velocity: 0.60
+    position_stage_joint3_velocity: 0.80
+    position_stage_wrist_velocity: 0.30
+    wrist_stage_yaw_velocity: 0.25
+    wrist_stage_joint2_velocity: 0.25
+    wrist_stage_joint3_velocity: 0.35
+    wrist_stage_wrist_velocity: 0.35
+    # WRIST 중 EE 위치가 밀리면 link2·3이 보정하고 손목은 저속으로 계속 정렬합니다.
+    wrist_recovery_yaw_velocity: 0.22
+    wrist_recovery_joint2_velocity: 0.30
+    wrist_recovery_joint3_velocity: 0.42
+    # 위치를 복구하는 동안에도 손목 정렬이 교착되지 않도록 아주 천천히 진행합니다.
+    wrist_recovery_wrist_velocity: 0.08
+    wrist_recovery_acceleration: 0.75
+    wrist_recovery_enter_error_m: 0.05
+    wrist_recovery_exit_error_m: 0.025
+    # Soft posture envelope 초과가 이 값 이하이면 clamp 후 실제 EE 회전 오차로 판정합니다.
+    max_wrist_target_clamp_rad: 0.35
+    pregrasp_stage_yaw_velocity: 0.18
+    pregrasp_stage_joint2_velocity: 0.20
+    pregrasp_stage_joint3_velocity: 0.28
+    pregrasp_stage_wrist_velocity: 0.22
+    descend_stage_yaw_velocity: 0.12
+    descend_stage_joint2_velocity: 0.08
+    descend_stage_joint3_velocity: 0.12
+    descend_stage_wrist_velocity: 0.12
+    position_stage_acceleration: 1.4
+    wrist_stage_acceleration: 0.9
+    pregrasp_stage_acceleration: 0.65
+    descend_stage_acceleration: 0.30
+    joint_soft_limit_margin: 0.12
+    # PICK 시작 자세에서 허용하는 최대 이동량 [joint1..joint6], rad.
+    pick_max_joint_excursion: [0.65, 1.80, 2.00, 1.40, 1.40, 2.00]
+    # sm_grasping_ros2/grasp_best의 전체 orientation을 link4·5·6으로 추종합니다.
+    grasp_orientation_wrist_mode: full
     grasp_link6_orientation_offset: 0.0
     grasp_link6_axis: "y"
     grasp_gripper_closing_axis: "x"
     grasp_target_closing_axis: "y"
     require_wrist_alignment_before_descend: true
     wrist_orientation_tolerance: 0.12
+
+    # Full six-axis IK is solved once, then fixed joint groups are executed.
+    # The dedicated top-down launch enables this mode.
+    enable_precomputed_top_down_sequence: false
+    top_down_use_fixed_reachable_orientation: false
+    top_down_blend_orientation_during_descent: false
+    top_down_pregrasp_clearance: 0.10
+    top_down_waypoint_spacing: 0.02
+    top_down_radial_inward_offset: 0.025
+    top_down_approach_joint_step: 0.12
+    top_down_minimum_approach_clearance: 0.08
+    top_down_minimum_orientation_fraction: 0.50
+    top_down_orientation_search_steps: 20
+    top_down_descend_max_xy_deviation: 0.015
+    top_down_descend_max_orientation_deviation: 0.035
+    top_down_segment_min_duration: 0.8
+    # Bounded endpoint feedback compensates steady-state simulator/actuator lag.
+    top_down_settle_max_command_offset: 0.10
+    top_down_joint_kp: 2.2
+    top_down_joint_tolerance: 0.025
+    # Generic missions stay strict; the dedicated simulator launch relaxes transit only.
+    top_down_transit_joint_tolerance: 0.025
+    top_down_stage_acceleration: 0.8
+    top_down_lift_home_clearance: 0.06
+    top_down_alignment_velocity_limits: [0.25, 0.50, 0.65, 0.45, 0.45, 0.45]
+    top_down_path_velocity_limits: [0.16, 0.22, 0.28, 0.22, 0.16, 0.22]
 
     # Joint safety position limits in radians.
     # joint1: -40 to 40 deg, joint2: -90 to 70 deg, joint3: -60 to 160 deg.
