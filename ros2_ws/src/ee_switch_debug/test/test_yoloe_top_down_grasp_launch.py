@@ -43,6 +43,8 @@ def test_top_down_launch_uses_yoloe_grasping_and_validation_only_controller():
     assert '"enable_staged_top_down_approach": True' in source
     assert '"enable_precomputed_top_down_sequence": True' in source
     assert '"top_down_use_fixed_reachable_orientation": True' in source
+    assert '"top_down_use_group_sequential_approach": False' in source
+    assert '"top_down_use_group_blended_approach": True' in source
     assert '"top_down_blend_orientation_during_descent": False' in source
     assert '"top_down_minimum_orientation_fraction": 0.50' in source
     assert '"top_down_orientation_search_steps": 20' in source

@@ -1,10 +1,16 @@
 """OMY-F3M kinematics used to plan a fixed top-down grasp sequence."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import acos, atan2, ceil, cos, pi, sin
 from typing import Sequence
 
 import numpy as np
+
+from ee_switch_debug.group_blended_trajectory import (
+    GroupBlendedTrajectory,
+    plan_group_blended_trajectory,
+    sample_group_blended_trajectory,
+)
 
 
 JOINT_AXES = ("z", "y", "y", "y", "z", "y")
@@ -45,6 +51,9 @@ class TopDownPlan:
     approach_waypoints: list[np.ndarray] = field(default_factory=list)
     descent_waypoints: list[np.ndarray] = field(default_factory=list)
     grasp_joints: np.ndarray = field(default_factory=lambda: np.zeros(6, dtype=float))
+    yaw_joints: np.ndarray = field(default_factory=lambda: np.zeros(6, dtype=float))
+    arm_joints: np.ndarray = field(default_factory=lambda: np.zeros(6, dtype=float))
+    blended_approach: GroupBlendedTrajectory | None = None
     selected_rotation: np.ndarray = field(default_factory=lambda: np.eye(3, dtype=float))
     orientation_fraction: float = 0.0
     message: str = ""
@@ -394,6 +403,362 @@ def solve_pose_ik(
             "IK did not converge: "
             f"position_error={last_position_error:.4f} m, "
             f"orientation_error={last_orientation_error:.4f} rad"
+        ),
+    )
+
+
+def solve_joint23_rho_z(
+    target_position: Sequence[float],
+    seed: Sequence[float],
+    lower_limits: Sequence[float],
+    upper_limits: Sequence[float],
+    *,
+    max_iterations: int = 160,
+    position_tolerance: float = 0.005,
+    damping: float = 0.02,
+) -> IKResult:
+    """Solve target rho/Z using only Joint 2 and Joint 3."""
+    target = np.asarray(target_position, dtype=float)
+    lower = np.asarray(lower_limits, dtype=float)
+    upper = np.asarray(upper_limits, dtype=float)
+    joints = np.asarray(seed, dtype=float).copy()
+    if target.shape != (3,):
+        raise ValueError("target position must contain three values")
+    if joints.shape != (6,) or lower.shape != (6,) or upper.shape != (6,):
+        raise ValueError("seed and limits must each contain six values")
+    if np.any(lower > upper):
+        return IKResult(False, joints, float("inf"), 0.0, 0, "invalid joint limits")
+    inactive = np.array([0, 3, 4, 5])
+    if np.any(joints[inactive] < lower[inactive]) or np.any(
+        joints[inactive] > upper[inactive]
+    ):
+        return IKResult(
+            False,
+            joints,
+            float("inf"),
+            0.0,
+            0,
+            "inactive joint is outside its limit",
+        )
+    joints[1:3] = np.clip(joints[1:3], lower[1:3], upper[1:3])
+
+    target_rho_z = np.array([np.hypot(target[0], target[1]), target[2]])
+    last_error = float("inf")
+    for iteration in range(max(0, int(max_iterations)) + 1):
+        position, _ = forward_kinematics(joints)
+        current_rho_z = np.array(
+            [np.hypot(position[0], position[1]), position[2]]
+        )
+        error = target_rho_z - current_rho_z
+        last_error = float(np.linalg.norm(error))
+        if np.max(np.abs(error)) <= max(0.0, float(position_tolerance)):
+            return IKResult(
+                True,
+                joints.copy(),
+                last_error,
+                0.0,
+                iteration,
+                "joint23 rho-Z converged",
+            )
+        if iteration == max_iterations:
+            break
+
+        epsilon = 1e-5
+        jacobian = np.zeros((2, 2), dtype=float)
+        for column, joint_index in enumerate((1, 2)):
+            perturbed = joints.copy()
+            perturbed[joint_index] += epsilon
+            next_position, _ = forward_kinematics(perturbed)
+            next_rho_z = np.array(
+                [np.hypot(next_position[0], next_position[1]), next_position[2]]
+            )
+            jacobian[:, column] = (next_rho_z - current_rho_z) / epsilon
+
+        augmented_matrix = np.vstack((jacobian, damping * np.eye(2)))
+        augmented_error = np.concatenate((error, np.zeros(2)))
+        step, *_ = np.linalg.lstsq(
+            augmented_matrix,
+            augmented_error,
+            rcond=None,
+        )
+        maximum = float(np.max(np.abs(step)))
+        if maximum > 0.12:
+            step *= 0.12 / maximum
+
+        accepted = False
+        for scale in (1.0, 0.5, 0.25, 0.1):
+            candidate = joints.copy()
+            candidate[1:3] = np.clip(
+                joints[1:3] + scale * step,
+                lower[1:3],
+                upper[1:3],
+            )
+            candidate_position, _ = forward_kinematics(candidate)
+            candidate_rho_z = np.array(
+                [
+                    np.hypot(candidate_position[0], candidate_position[1]),
+                    candidate_position[2],
+                ]
+            )
+            if np.linalg.norm(target_rho_z - candidate_rho_z) < last_error - 1e-10:
+                joints = candidate
+                accepted = True
+                break
+        if not accepted:
+            break
+
+    return IKResult(
+        False,
+        joints.copy(),
+        last_error,
+        0.0,
+        iteration,
+        f"joint23 rho-Z did not converge: error={last_error:.4f} m",
+    )
+
+
+def _solve_group_approach_endpoints(
+    fixed_plan: TopDownPlan,
+    current: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Build group-owned yaw and restricted Joint2/3 endpoints."""
+    pregrasp = np.asarray(fixed_plan.pregrasp_joints, dtype=float)
+    yaw = current.copy()
+    yaw[0] = pregrasp[0]
+    pregrasp_position, _ = forward_kinematics(pregrasp)
+    arm_result = solve_joint23_rho_z(
+        pregrasp_position,
+        yaw,
+        lower,
+        upper,
+    )
+    return (
+        yaw,
+        arm_result.joints.copy(),
+        "" if arm_result.success else arm_result.message,
+    )
+
+
+def build_group_sequential_approach(
+    fixed_plan: TopDownPlan,
+    current_joints: Sequence[float],
+    lower_limits: Sequence[float],
+    upper_limits: Sequence[float],
+    *,
+    minimum_clearance: float = 0.08,
+    sample_count: int = 31,
+) -> TopDownPlan:
+    """Build and validate YAW, ARM_POSITION, and WRIST_ALIGN endpoints."""
+    if not fixed_plan.success:
+        return fixed_plan
+    current = np.asarray(current_joints, dtype=float)
+    lower = np.asarray(lower_limits, dtype=float)
+    upper = np.asarray(upper_limits, dtype=float)
+    pregrasp = np.asarray(fixed_plan.pregrasp_joints, dtype=float)
+    grasp = np.asarray(fixed_plan.grasp_joints, dtype=float)
+    if any(values.shape != (6,) for values in (current, lower, upper, pregrasp, grasp)):
+        raise ValueError("group approach joints and limits must contain six values")
+
+    yaw, arm, endpoint_error = _solve_group_approach_endpoints(
+        fixed_plan,
+        current,
+        lower,
+        upper,
+    )
+    if endpoint_error:
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            message=f"ARM_POSITION {endpoint_error}",
+        )
+
+    grasp_position, _ = forward_kinematics(grasp)
+    minimum_z = float(grasp_position[2]) + max(0.0, float(minimum_clearance))
+    samples = max(3, int(sample_count))
+    sections = (("YAW", current, yaw), ("ARM_POSITION", yaw, arm), ("WRIST_ALIGN", arm, pregrasp))
+    for name, start, goal in sections:
+        for fraction in np.linspace(0.0, 1.0, samples):
+            joints = start + float(fraction) * (goal - start)
+            existing_tracking_margin = 0.01 if name in ("YAW", "ARM_POSITION") else 0.0
+            if np.any(joints < lower - existing_tracking_margin - 1e-9) or np.any(
+                joints > upper + existing_tracking_margin + 1e-9
+            ):
+                return replace(
+                    fixed_plan,
+                    success=False,
+                    yaw_joints=yaw,
+                    arm_joints=arm,
+                    message=f"{name} exceeds joint limits",
+                )
+            if name != "YAW" and abs(float(joints[0] - yaw[0])) > 1e-9:
+                return replace(
+                    fixed_plan,
+                    success=False,
+                    yaw_joints=yaw,
+                    arm_joints=arm,
+                    message=f"{name} changed Joint 1 after YAW",
+                )
+            position, _ = forward_kinematics(joints)
+            if float(position[2]) < minimum_z - 1e-9:
+                return replace(
+                    fixed_plan,
+                    success=False,
+                    yaw_joints=yaw,
+                    arm_joints=arm,
+                    message=(
+                        f"{name} height {position[2]:.4f} m is below "
+                        f"safe height {minimum_z:.4f} m"
+                    ),
+                )
+
+    return replace(
+        fixed_plan,
+        yaw_joints=yaw,
+        arm_joints=arm,
+        message=(
+            "planned restricted joint-group approach and fixed descent; "
+            f"orientation_fraction={fixed_plan.orientation_fraction:.3f}"
+        ),
+    )
+
+
+def build_group_blended_approach(
+    fixed_plan: TopDownPlan,
+    current_joints: Sequence[float],
+    lower_limits: Sequence[float],
+    upper_limits: Sequence[float],
+    velocity_limits: Sequence[float],
+    acceleration_limit: float,
+    minimum_duration: float,
+    minimum_clearance: float,
+    sample_count: int = 101,
+) -> TopDownPlan:
+    """Build and validate one fully blended joint-group approach."""
+    if not fixed_plan.success:
+        return fixed_plan
+    current = np.asarray(current_joints, dtype=float)
+    lower = np.asarray(lower_limits, dtype=float)
+    upper = np.asarray(upper_limits, dtype=float)
+    pregrasp = np.asarray(fixed_plan.pregrasp_joints, dtype=float)
+    grasp = np.asarray(fixed_plan.grasp_joints, dtype=float)
+    values = (current, lower, upper, pregrasp, grasp)
+    if any(value.shape != (6,) for value in values):
+        raise ValueError("group approach joints and limits must contain six values")
+    if not all(np.all(np.isfinite(value)) for value in values):
+        return replace(
+            fixed_plan,
+            success=False,
+            message="blended approach contains non-finite input",
+        )
+    if np.any(lower > upper):
+        return replace(
+            fixed_plan,
+            success=False,
+            message="blended approach has invalid joint limits",
+        )
+    measured_margin = 0.01
+    if np.any(current < lower - measured_margin) or np.any(
+        current > upper + measured_margin
+    ):
+        return replace(
+            fixed_plan,
+            success=False,
+            message="blended approach start exceeds measured joint tolerance",
+        )
+
+    yaw, arm, endpoint_error = _solve_group_approach_endpoints(
+        fixed_plan,
+        current,
+        lower,
+        upper,
+    )
+    if endpoint_error:
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            arm_joints=arm,
+            message=f"ARM_POSITION {endpoint_error}",
+        )
+    try:
+        trajectory = plan_group_blended_trajectory(
+            current,
+            yaw,
+            arm,
+            pregrasp,
+            velocity_limits,
+            acceleration_limit,
+            minimum_duration,
+        )
+    except ValueError as error:
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            arm_joints=arm,
+            message=f"blended approach {error}",
+        )
+
+    if np.any(pregrasp < lower - 1e-9) or np.any(pregrasp > upper + 1e-9):
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            arm_joints=arm,
+            message="blended approach pregrasp exceeds hard joint limits",
+        )
+    allowed_lower = np.minimum(lower, current)
+    allowed_upper = np.maximum(upper, current)
+    grasp_position, _ = forward_kinematics(grasp)
+    minimum_z = float(grasp_position[2]) + max(0.0, float(minimum_clearance))
+    for elapsed in np.linspace(
+        0.0,
+        trajectory.duration,
+        max(3, int(sample_count)),
+    ):
+        joints, _ = sample_group_blended_trajectory(trajectory, elapsed)
+        if np.any(~np.isfinite(joints)):
+            return replace(
+                fixed_plan,
+                success=False,
+                yaw_joints=yaw,
+                arm_joints=arm,
+                message="blended approach generated non-finite joints",
+            )
+        if np.any(joints < allowed_lower - 1e-9) or np.any(
+            joints > allowed_upper + 1e-9
+        ):
+            return replace(
+                fixed_plan,
+                success=False,
+                yaw_joints=yaw,
+                arm_joints=arm,
+                message="blended approach moves farther outside joint limits",
+            )
+        position, _ = forward_kinematics(joints)
+        if float(position[2]) < minimum_z - 1e-9:
+            return replace(
+                fixed_plan,
+                success=False,
+                yaw_joints=yaw,
+                arm_joints=arm,
+                message=(
+                    "blended approach clearance violation: "
+                    f"height={position[2]:.4f} m, minimum={minimum_z:.4f} m"
+                ),
+            )
+
+    return replace(
+        fixed_plan,
+        yaw_joints=yaw,
+        arm_joints=arm,
+        blended_approach=trajectory,
+        message=(
+            "planned group-preserving blended approach; "
+            f"duration={trajectory.duration:.3f} s"
         ),
     )
 

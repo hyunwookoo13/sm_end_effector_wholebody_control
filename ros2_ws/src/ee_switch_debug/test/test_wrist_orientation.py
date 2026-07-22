@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import ee_switch_debug.arm_yaw_rho_z_position_controller as controller
 import numpy as np
+import pytest
 import rclpy
 from std_msgs.msg import String
 
@@ -11,6 +12,7 @@ from ee_switch_debug.arm_yaw_rho_z_position_controller import (
     compute_wrist_targets_from_orientation,
     fixed_target_joint_velocities,
     is_wrist_aligned_for_phase,
+    measured_pregrasp_pose_valid,
     semantic_stage_joint_tolerance,
     semantic_stage_trajectory_profile,
     semantic_top_down_stage_goal,
@@ -29,6 +31,55 @@ def test_top_down_stages_move_only_the_selected_joint_group():
     assert top_down_stage_mask("WRIST") == [False, False, False, True, True, True]
     assert top_down_stage_mask("DESCEND") == [True] * 6
     assert top_down_stage_mask("HOME") == [True] * 6
+
+
+def test_group_approach_modes_are_mutually_exclusive():
+    assert controller.configured_group_approach_mode(False, False) == "disabled"
+    assert controller.configured_group_approach_mode(True, False) == "sequential"
+    assert controller.configured_group_approach_mode(False, True) == "blended"
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        controller.configured_group_approach_mode(True, True)
+
+
+def test_group_sequential_stage_goals_and_masks():
+    plan = SimpleNamespace(
+        yaw_joints=np.arange(6),
+        arm_joints=np.arange(6) + 10,
+        pregrasp_joints=np.arange(6) + 20,
+    )
+
+    assert np.array_equal(
+        semantic_top_down_stage_goal("YAW", plan, []),
+        plan.yaw_joints,
+    )
+    assert np.array_equal(
+        semantic_top_down_stage_goal("ARM_POSITION", plan, []),
+        plan.arm_joints,
+    )
+    assert np.array_equal(
+        semantic_top_down_stage_goal("WRIST_ALIGN", plan, []),
+        plan.pregrasp_joints,
+    )
+    assert top_down_stage_mask("YAW") == [True, False, False, False, False, False]
+    assert top_down_stage_mask("ARM_POSITION") == [False, True, True, False, False, False]
+    assert top_down_stage_mask("WRIST_ALIGN") == [False, True, True, True, True, True]
+
+
+def test_measured_pregrasp_pose_requires_position_and_orientation():
+    pregrasp = np.array([0.1, -1.0, 1.5, -0.5, 1.2, -0.2])
+    _, selected_rotation = controller.forward_kinematics(pregrasp)
+    plan = SimpleNamespace(
+        pregrasp_joints=pregrasp,
+        selected_rotation=selected_rotation,
+    )
+
+    assert measured_pregrasp_pose_valid(pregrasp, plan, 0.01, 0.04)
+    assert not measured_pregrasp_pose_valid(
+        pregrasp + np.array([0.0, 0.2, 0.0, 0.0, 0.0, 0.0]),
+        plan,
+        0.01,
+        0.04,
+    )
 
 
 def test_fixed_target_velocity_uses_measured_error_and_holds_other_groups():
@@ -165,7 +216,7 @@ def test_blended_plan_is_selected_once_and_starts_synchronized_approach(monkeypa
     assert node.top_down_waypoint_index == 0
 
 
-def test_fixed_orientation_plan_is_selected_once(monkeypatch):
+def test_fixed_orientation_plan_is_converted_to_group_sequence_once(monkeypatch):
     node = controller.ArmYawRhoZPositionController.__new__(
         controller.ArmYawRhoZPositionController
     )
@@ -185,6 +236,7 @@ def test_fixed_orientation_plan_is_selected_once(monkeypatch):
     node.pick_start_positions = [0.0] * 6
     node.pick_max_joint_excursion = [3.0] * 6
     node.top_down_use_fixed_reachable_orientation = True
+    node.top_down_use_group_sequential_approach = True
     node.top_down_blend_orientation_during_descent = False
     node.top_down_pregrasp_clearance = 0.10
     node.top_down_radial_inward_offset = 0.025
@@ -192,12 +244,14 @@ def test_fixed_orientation_plan_is_selected_once(monkeypatch):
     node.top_down_orientation_search_steps = 20
     node.top_down_descend_max_xy_deviation = 0.015
     node.top_down_descend_max_orientation_deviation = 0.035
+    node.top_down_minimum_approach_clearance = 0.08
     node.top_down_stage = "WAIT_TARGET"
     node.top_down_waypoint_index = 99
     node.get_logger = lambda: type(
         "Logger", (), {"warn": lambda self, message: None, "error": lambda self, message: None}
     )()
     calls = []
+    group_calls = []
 
     def fake_fixed_plan(*args, **kwargs):
         calls.append((args, kwargs))
@@ -212,6 +266,13 @@ def test_fixed_orientation_plan_is_selected_once(monkeypatch):
         )
 
     monkeypatch.setattr(controller, "plan_fixed_orientation_top_down_sequence", fake_fixed_plan)
+    def fake_group_plan(plan, **kwargs):
+        group_calls.append((plan, kwargs))
+        plan.yaw_joints = np.full(6, 0.03)
+        plan.arm_joints = np.full(6, 0.06)
+        return plan
+
+    monkeypatch.setattr(controller, "build_group_sequential_approach", fake_group_plan)
     monkeypatch.setattr(
         controller,
         "plan_blended_top_down_sequence",
@@ -221,8 +282,98 @@ def test_fixed_orientation_plan_is_selected_once(monkeypatch):
     assert node.ensure_precomputed_top_down_plan([0.3, 0.0, 0.4], np.eye(3))
     assert node.ensure_precomputed_top_down_plan([9.0, 9.0, 9.0], np.eye(3))
     assert len(calls) == 1
+    assert len(group_calls) == 1
+    assert group_calls[0][1]["minimum_clearance"] == 0.08
     assert calls[0][1]["minimum_orientation_fraction"] == 0.50
-    assert node.top_down_stage == "APPROACH"
+    assert node.top_down_stage == "YAW"
+
+
+def test_fixed_orientation_plan_is_converted_to_blended_group_path_once(
+    monkeypatch,
+):
+    node = controller.ArmYawRhoZPositionController.__new__(
+        controller.ArmYawRhoZPositionController
+    )
+    node.top_down_plan = None
+    node.top_down_plan_attempted = False
+    node.top_down_plan_error = ""
+    node.current_joints = {
+        name: value
+        for name, value in zip(
+            ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+            [0.0, -1.57, 2.09, -0.52, 1.57, 0.0],
+        )
+    }
+    node.joint_names = list(node.current_joints)
+    node.joint_lower_limits = [-3.14] * 6
+    node.joint_upper_limits = [3.14] * 6
+    node.pick_start_positions = [0.0] * 6
+    node.pick_max_joint_excursion = [3.0] * 6
+    node.top_down_use_fixed_reachable_orientation = True
+    node.top_down_use_group_sequential_approach = False
+    node.top_down_use_group_blended_approach = True
+    node.top_down_blend_orientation_during_descent = False
+    node.top_down_pregrasp_clearance = 0.10
+    node.top_down_radial_inward_offset = 0.025
+    node.top_down_minimum_orientation_fraction = 0.50
+    node.top_down_orientation_search_steps = 20
+    node.top_down_descend_max_xy_deviation = 0.015
+    node.top_down_descend_max_orientation_deviation = 0.035
+    node.top_down_minimum_approach_clearance = 0.08
+    node.top_down_alignment_velocity_limits = [0.7] * 6
+    node.top_down_stage_acceleration = 1.6
+    node.top_down_segment_min_duration = 0.6
+    node.top_down_stage = "WAIT_TARGET"
+    node.top_down_waypoint_index = 99
+    node.get_logger = lambda: SimpleNamespace(
+        warn=lambda *_args: None,
+        error=lambda *_args: None,
+    )
+    fixed_calls = []
+    blended_calls = []
+
+    def fake_fixed_plan(*args, **kwargs):
+        fixed_calls.append((args, kwargs))
+        return SimpleNamespace(
+            success=True,
+            pregrasp_joints=np.full(6, 0.1),
+            grasp_joints=np.full(6, 0.2),
+            approach_waypoints=[],
+            descent_waypoints=[],
+            orientation_fraction=0.8,
+            message="planned",
+        )
+
+    def fake_blended_group_plan(plan, **kwargs):
+        blended_calls.append((plan, kwargs))
+        plan.blended_approach = SimpleNamespace(duration=1.0)
+        return plan
+
+    monkeypatch.setattr(
+        controller,
+        "plan_fixed_orientation_top_down_sequence",
+        fake_fixed_plan,
+    )
+    monkeypatch.setattr(
+        controller,
+        "build_group_blended_approach",
+        fake_blended_group_plan,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        controller,
+        "build_group_sequential_approach",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("sequential fallback called")
+        ),
+    )
+
+    assert node.ensure_precomputed_top_down_plan([0.3, 0.0, 0.4], np.eye(3))
+    assert node.ensure_precomputed_top_down_plan([9.0, 9.0, 9.0], np.eye(3))
+    assert len(fixed_calls) == 1
+    assert len(blended_calls) == 1
+    assert blended_calls[0][1]["minimum_clearance"] == 0.08
+    assert node.top_down_stage == "BLENDED_APPROACH"
 
 
 def test_semantic_stages_use_only_motion_endpoints():
@@ -239,7 +390,8 @@ def test_semantic_stages_use_only_motion_endpoints():
 
 
 def test_semantic_stage_tolerance_keeps_descend_strict():
-    assert semantic_stage_joint_tolerance("DESCEND", 0.025, 0.050) == 0.025
+    for stage in ("YAW", "ARM_POSITION", "WRIST_ALIGN", "DESCEND"):
+        assert semantic_stage_joint_tolerance(stage, 0.025, 0.050) == 0.025
     for stage in ("APPROACH", "LIFT", "HOME"):
         assert semantic_stage_joint_tolerance(stage, 0.025, 0.050) == 0.050
     assert semantic_stage_joint_tolerance("UNKNOWN", 0.025, 0.050) == 0.025
@@ -475,6 +627,150 @@ def test_lift_clearance_switches_to_continuous_home_before_full_lift():
     assert node.top_down_continuous_home
     assert node.grasp_phase == "HOME"
     assert calls == [("HOME", True)]
+
+
+def make_group_sequence_node(stage):
+    node = controller.ArmYawRhoZPositionController.__new__(
+        controller.ArmYawRhoZPositionController
+    )
+    node.top_down_stage = stage
+    node.grasp_phase = "APPROACH"
+    node.gripper_close_position = 0.8
+    node.gripper_open_position = 0.0
+    node.top_down_plan = SimpleNamespace(
+        yaw_joints=np.zeros(6),
+        arm_joints=np.zeros(6),
+        pregrasp_joints=np.zeros(6),
+        grasp_joints=np.zeros(6),
+        selected_rotation=np.eye(3),
+    )
+    node.home_positions = [0.0] * 6
+    node.current_joints = {
+        f"joint{index}": 0.0 for index in range(1, 7)
+    }
+    node.joint_names = list(node.current_joints)
+    node.return_home_after_pick = True
+    node.top_down_continuous_home = False
+    node.top_down_segment_duration = 0.0
+    node.publish_position_command = lambda: None
+    node.publish_task_state = lambda: None
+    node.disable_target_tracking = lambda: None
+    node.get_logger = lambda: SimpleNamespace(warn=lambda *_args: None)
+    return node
+
+
+def test_group_sequence_transitions_are_strictly_ordered():
+    transitions = (
+        ("YAW", "ARM_POSITION"),
+        ("ARM_POSITION", "WRIST_ALIGN"),
+        ("WRIST_ALIGN", "PREGRASP_VERIFY"),
+    )
+    for stage, expected in transitions:
+        node = make_group_sequence_node(stage)
+        commanded_stages = []
+        node.command_semantic_top_down_segment = (
+            lambda _goal, commanded_stage, _dt: (
+                commanded_stages.append(commanded_stage) or True
+            )
+        )
+        node.advance_precomputed_top_down_stage = (
+            lambda next_stage, preserve_velocity=False: setattr(
+                node, "top_down_stage", next_stage
+            )
+        )
+
+        node.run_semantic_fixed_orientation_pick(0.1)
+
+        assert commanded_stages == [stage]
+        assert node.top_down_stage == expected
+
+
+def test_blended_approach_transitions_only_to_pregrasp_verify():
+    node = make_group_sequence_node("BLENDED_APPROACH")
+    node.command_group_blended_approach = lambda _dt: True
+    transitions = []
+    node.advance_precomputed_top_down_stage = (
+        lambda next_stage, preserve_velocity=False: transitions.append(
+            next_stage
+        )
+    )
+
+    node.run_semantic_fixed_orientation_pick(0.1)
+
+    assert transitions == ["PREGRASP_VERIFY"]
+    assert node.gripper_position == node.gripper_open_position
+
+
+def test_blended_command_publishes_one_composed_position(monkeypatch):
+    node = make_semantic_segment_node()
+    node.top_down_plan = SimpleNamespace(
+        blended_approach=SimpleNamespace(duration=2.0),
+        pregrasp_joints=np.full(6, 0.5),
+    )
+    node.previous_velocity = [0.0] * 6
+    monkeypatch.setattr(
+        controller,
+        "sample_group_blended_trajectory",
+        lambda _trajectory, _elapsed: (np.arange(6, dtype=float), False),
+    )
+
+    assert not node.command_group_blended_approach(0.1)
+    assert node.position_command[:6] == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+
+
+def test_semantic_yaw_segment_freezes_every_inactive_joint(monkeypatch):
+    node = make_semantic_segment_node()
+    measured = [0.0, -1.1, 1.6, -0.4, 1.2, -0.3]
+    node.current_joints = dict(zip(node.joint_names, measured))
+    node.position_command = list(measured)
+    captured_goal = []
+    monkeypatch.setattr(
+        controller,
+        "minimum_compact_duration",
+        lambda *_args, **_kwargs: 2.0,
+    )
+
+    def sample(start, goal, *_args):
+        captured_goal.extend(goal)
+        return np.asarray(start), False
+
+    monkeypatch.setattr(controller, "sample_compact_joint_positions", sample)
+
+    node.command_semantic_top_down_segment(
+        [0.3, 9.0, 9.0, 9.0, 9.0, 9.0],
+        "YAW",
+        0.1,
+    )
+
+    assert captured_goal == [0.3] + measured[1:]
+
+
+def test_pregrasp_verify_blocks_descend_until_measured_pose_is_valid(monkeypatch):
+    node = make_group_sequence_node("PREGRASP_VERIFY")
+    transitions = []
+    node.advance_precomputed_top_down_stage = (
+        lambda next_stage, preserve_velocity=False: transitions.append(next_stage)
+    )
+    monkeypatch.setattr(
+        controller,
+        "measured_pregrasp_pose_valid",
+        lambda *_args: False,
+    )
+
+    node.run_semantic_fixed_orientation_pick(0.1)
+
+    assert transitions == []
+    assert node.gripper_position == node.gripper_open_position
+
+    monkeypatch.setattr(
+        controller,
+        "measured_pregrasp_pose_valid",
+        lambda *_args: True,
+    )
+    node.run_semantic_fixed_orientation_pick(0.1)
+
+    assert transitions == ["DESCEND"]
+    assert node.grasp_phase == "DESCEND"
 
 
 def test_semantic_descend_feedback_removes_steady_state_joint_error(monkeypatch):

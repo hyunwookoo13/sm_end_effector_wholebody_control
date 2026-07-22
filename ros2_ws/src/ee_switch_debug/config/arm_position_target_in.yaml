@@ -115,10 +115,12 @@ arm_yaw_rho_z_position_controller:
     require_wrist_alignment_before_descend: true
     wrist_orientation_tolerance: 0.12
 
-    # Full six-axis IK is solved once, then fixed joint groups are executed.
+    # Full six-axis IK validates the endpoint; group-generated paths execute it.
     # The dedicated top-down launch enables this mode.
     enable_precomputed_top_down_sequence: false
     top_down_use_fixed_reachable_orientation: false
+    top_down_use_group_sequential_approach: false
+    top_down_use_group_blended_approach: false
     top_down_blend_orientation_during_descent: false
     top_down_pregrasp_clearance: 0.10
     top_down_waypoint_spacing: 0.02
