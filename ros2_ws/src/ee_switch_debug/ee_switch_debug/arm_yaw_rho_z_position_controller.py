@@ -15,7 +15,11 @@ from ee_switch_debug.semantic_joint_trajectory import (
     sample_compact_joint_positions,
     sample_quintic_joint_positions,
 )
+from ee_switch_debug.group_blended_trajectory import (
+    sample_group_blended_trajectory,
+)
 from ee_switch_debug.top_down_kinematics import (
+    build_group_blended_approach,
     build_group_sequential_approach,
     forward_kinematics,
     grasp_marker_rotation_to_ee_rotation,
@@ -32,6 +36,19 @@ def clamp(value: float, lower: float, upper: float) -> float:
 
 def normalize_angle(angle: float) -> float:
     return (angle + pi) % (2.0 * pi) - pi
+
+
+def configured_group_approach_mode(sequential: bool, blended: bool) -> str:
+    """Resolve one explicit group-approach executor."""
+    if sequential and blended:
+        raise ValueError(
+            "sequential and blended group approaches are mutually exclusive"
+        )
+    if blended:
+        return "blended"
+    if sequential:
+        return "sequential"
+    return "disabled"
 
 
 def top_down_stage_mask(stage: str) -> list[bool]:
@@ -584,6 +601,7 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("enable_precomputed_top_down_sequence", False)
         self.declare_parameter("top_down_use_fixed_reachable_orientation", False)
         self.declare_parameter("top_down_use_group_sequential_approach", False)
+        self.declare_parameter("top_down_use_group_blended_approach", False)
         self.declare_parameter("top_down_blend_orientation_during_descent", False)
         self.declare_parameter("top_down_pregrasp_clearance", 0.10)
         self.declare_parameter("top_down_waypoint_spacing", 0.02)
@@ -851,6 +869,9 @@ class ArmYawRhoZPositionController(Node):
         )
         self.top_down_use_group_sequential_approach = bool(
             self.get_parameter("top_down_use_group_sequential_approach").value
+        )
+        self.top_down_use_group_blended_approach = bool(
+            self.get_parameter("top_down_use_group_blended_approach").value
         )
         self.top_down_blend_orientation_during_descent = bool(
             self.get_parameter("top_down_blend_orientation_during_descent").value
@@ -1215,6 +1236,27 @@ class ArmYawRhoZPositionController(Node):
         fixed_orientation = bool(
             getattr(self, "top_down_use_fixed_reachable_orientation", False)
         )
+        try:
+            group_mode = configured_group_approach_mode(
+                getattr(self, "top_down_use_group_sequential_approach", False),
+                getattr(self, "top_down_use_group_blended_approach", False),
+            )
+        except ValueError as error:
+            self.top_down_plan_error = str(error)
+            self.top_down_stage = "PLAN_FAILED"
+            self.get_logger().error(
+                f"Top-down PICK configuration rejected: {error}"
+            )
+            return False
+        if group_mode != "disabled" and not fixed_orientation:
+            self.top_down_plan_error = (
+                "group approach requires fixed reachable orientation"
+            )
+            self.top_down_stage = "PLAN_FAILED"
+            self.get_logger().error(
+                f"Top-down PICK configuration rejected: {self.top_down_plan_error}"
+            )
+            return False
         if fixed_orientation:
             plan = plan_fixed_orientation_top_down_sequence(
                 final_position,
@@ -1231,10 +1273,18 @@ class ArmYawRhoZPositionController(Node):
                     self.top_down_descend_max_orientation_deviation
                 ),
             )
-            if (
-                plan.success
-                and getattr(self, "top_down_use_group_sequential_approach", False)
-            ):
+            if plan.success and group_mode == "blended":
+                plan = build_group_blended_approach(
+                    plan,
+                    current_joints=current,
+                    lower_limits=lower,
+                    upper_limits=upper,
+                    velocity_limits=self.top_down_alignment_velocity_limits,
+                    acceleration_limit=self.top_down_stage_acceleration,
+                    minimum_duration=self.top_down_segment_min_duration,
+                    minimum_clearance=self.top_down_minimum_approach_clearance,
+                )
+            elif plan.success and group_mode == "sequential":
                 plan = build_group_sequential_approach(
                     plan,
                     current_joints=current,
@@ -1275,17 +1325,14 @@ class ArmYawRhoZPositionController(Node):
 
         self.top_down_plan = plan
         blended = bool(getattr(plan, "approach_waypoints", []))
-        group_sequential = bool(
-            fixed_orientation
-            and getattr(self, "top_down_use_group_sequential_approach", False)
-        )
-        self.top_down_stage = (
-            "YAW"
-            if group_sequential
-            else "APPROACH"
-            if fixed_orientation or blended
-            else "YAW"
-        )
+        if group_mode == "blended":
+            self.top_down_stage = "BLENDED_APPROACH"
+        elif group_mode == "sequential":
+            self.top_down_stage = "YAW"
+        elif fixed_orientation or blended:
+            self.top_down_stage = "APPROACH"
+        else:
+            self.top_down_stage = "YAW"
         self.top_down_waypoint_index = 0
         self.pick_approach_stage = self.top_down_stage
         self.previous_velocity = [0.0] * 6
@@ -1456,6 +1503,85 @@ class ArmYawRhoZPositionController(Node):
             )
         return False
 
+    def command_group_blended_approach(self, dt: float) -> bool:
+        """Sample one immutable group-composed approach, then settle measured error."""
+        stage = "BLENDED_APPROACH"
+        trajectory = self.top_down_plan.blended_approach
+        if trajectory is None:
+            raise ValueError("blended approach trajectory is missing")
+        if self.top_down_segment_stage != stage:
+            self.top_down_segment_stage = stage
+            self.top_down_segment_start_time = self.get_clock().now()
+            self.top_down_segment_planned_complete = False
+            self.top_down_segment_duration = float(trajectory.duration)
+            self.get_logger().warn(
+                "Top-down BLENDED_APPROACH trajectory started: "
+                f"duration={trajectory.duration:.2f} s"
+            )
+
+        elapsed = (
+            self.get_clock().now() - self.top_down_segment_start_time
+        ).nanoseconds * 1e-9
+        position, planned_complete = sample_group_blended_trajectory(
+            trajectory,
+            elapsed,
+        )
+        if not planned_complete:
+            previous_command = list(self.position_command[:6])
+            safe_dt = max(float(dt), 1e-6)
+            self.previous_velocity = [
+                clamp(
+                    (float(value) - float(previous)) / safe_dt,
+                    -abs(float(limit)),
+                    abs(float(limit)),
+                )
+                for value, previous, limit in zip(
+                    position,
+                    previous_command,
+                    self.top_down_alignment_velocity_limits,
+                )
+            ]
+            self.position_command[:6] = [float(value) for value in position]
+            return False
+
+        endpoint = [
+            float(value) for value in self.top_down_plan.pregrasp_joints
+        ]
+        if not self.top_down_segment_planned_complete:
+            self.position_command[:6] = endpoint
+            self.top_down_segment_planned_complete = True
+
+        current = [
+            float(self.current_joints[name]) for name in self.joint_names
+        ]
+        desired_velocity, aligned = fixed_target_joint_velocities(
+            current=current,
+            target=endpoint,
+            active_mask=[True] * 6,
+            kp=self.top_down_joint_kp,
+            velocity_limits=self.top_down_alignment_velocity_limits,
+            tolerance=self.top_down_joint_tolerance,
+        )
+        if aligned:
+            self.previous_velocity = [0.0] * 6
+            return True
+
+        desired_velocity = self.apply_joint_limit_slowdown(desired_velocity)
+        limited_velocity = self.limit_acceleration(
+            desired_velocity,
+            dt,
+            max_acceleration=self.top_down_stage_acceleration,
+        )
+        self.integrate_position_command(limited_velocity, dt)
+        maximum_offset = self.top_down_settle_max_command_offset
+        for index, target in enumerate(endpoint):
+            self.position_command[index] = clamp(
+                self.position_command[index],
+                target - maximum_offset,
+                target + maximum_offset,
+            )
+        return False
+
     def command_continuous_top_down_home(
         self,
         goal: list[float],
@@ -1518,7 +1644,11 @@ class ArmYawRhoZPositionController(Node):
             else self.gripper_open_position
         )
 
-        if stage in (
+        if stage == "BLENDED_APPROACH":
+            if self.command_group_blended_approach(dt):
+                self.advance_precomputed_top_down_stage("PREGRASP_VERIFY")
+
+        elif stage in (
             "APPROACH",
             "YAW",
             "ARM_POSITION",
