@@ -119,6 +119,7 @@ arm_yaw_rho_z_position_controller:
     # The dedicated top-down launch enables this mode.
     enable_precomputed_top_down_sequence: false
     top_down_use_fixed_reachable_orientation: false
+    top_down_use_group_sequential_approach: false
     top_down_blend_orientation_during_descent: false
     top_down_pregrasp_clearance: 0.10
     top_down_waypoint_spacing: 0.02

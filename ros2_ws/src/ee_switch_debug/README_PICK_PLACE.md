@@ -6,8 +6,10 @@ This launch uses YOLOE plus `sm_grasping_ros2`, freezes the first fresh grasp
 after `PICK`, solves one complete six-axis plan, and executes:
 
 ```text
-SMOOTH APPROACH -> FIXED-ORIENTATION DESCEND -> GRASP
-    -> FIXED-ORIENTATION LIFT -> SMOOTH HOME -> HOLD
+YAW(Joint 1) -> ARM_POSITION(Joint 2/3)
+    -> WRIST_ALIGN(Joint 4/5/6 + Joint 2/3 compensation)
+    -> PREGRASP_VERIFY -> FIXED-ORIENTATION DESCEND -> GRASP
+    -> FIXED-ORIENTATION LIFT -> CONTINUOUS HOME -> HOLD
 ```
 
 The mobile base remains fixed. The planner searches for the closest-to-top-down
@@ -16,18 +18,25 @@ point. For the recorded current-distance geometry this is approximately 24
 degrees from exact top-down. DESCEND and LIFT keep that one orientation instead
 of rotating the wrist near the object.
 
+The whole-arm IK solution is used only to prove that the final pregrasp and
+grasp poses are reachable and that DESCEND is safe. It is not executed as a
+simultaneous six-joint APPROACH. The active controller first moves Joint 1,
+then Joint 2/3, then aligns Joint 4/5/6 while Joint 2/3 move from their
+wrist-safe position to the final pregrasp compensation. Dense FK samples reject
+any group path that violates limits or drops below the configured safe height.
+
 The approach and descent are both computed once
 from the first post-`PICK` snapshot, so later mask or marker motion cannot steer
 the arm. A 2.5 cm inward radial correction compensates the grasp generator's
-outward offset. APPROACH, DESCEND, LIFT, and HOME use bounded time-scaled
-trajectories with no intermediate waypoint stops. APPROACH, LIFT, and HOME use a compact
-cubic S-curve to reduce visually stationary starts and finishes, while DESCEND
+outward offset. YAW, ARM_POSITION, WRIST_ALIGN, DESCEND, LIFT, and HOME use
+bounded time-scaled trajectories with no intermediate waypoint stops. The
+three approach groups, LIFT, and HOME use a compact cubic S-curve, while DESCEND
 keeps the minimum-jerk quintic profile. The dedicated launch velocity limits,
 1.6 rad/s^2 acceleration limit, and 0.6 s minimum duration are unchanged. The
-dedicated test launch accepts up to
-0.050 rad measured-joint error at the non-contact APPROACH, LIFT, and HOME
-endpoints to avoid multi-second actuator-settling pauses. DESCEND remains strict
-at 0.025 rad before the gripper closes. Each semantic segment still reaches zero
+dedicated test launch keeps the three group-approach endpoints and DESCEND
+strict at 0.025 rad so PREGRASP_VERIFY cannot inherit a coarse wrist pose. LIFT
+and HOME accept up to 0.050 rad measured-joint error to avoid multi-second
+actuator-settling pauses. Each semantic segment still reaches zero
 endpoint velocity before the next stage; a new recording is required to verify
 the resulting duration and visual naturalness for each target pose.
 
@@ -52,7 +61,8 @@ ros2 topic pub --once /sm_florence_2_vlm/target_objects \
 ros2 topic pub --once /arm_task_command std_msgs/msg/String "{data: 'PICK'}"
 ```
 
-Watch `/arm_task_state` for `PICK:APPROACH`, `PICK:DESCEND`, `PICK:GRASP`,
+Watch `/arm_task_state` for `PICK:YAW`, `PICK:ARM_POSITION`,
+`PICK:WRIST_ALIGN`, `PICK:PREGRASP_VERIFY`, `PICK:DESCEND`, `PICK:GRASP`,
 `PICK:LIFT`, `PICK:HOME`, and `PICK:HOLD`. `PICK:PLAN_FAILED` means no common
 fixed orientation met the configured workspace, joint-envelope, or descent-path
 limits. The arm deliberately holds instead of falling back to reactive position

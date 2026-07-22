@@ -4,6 +4,7 @@ import numpy as np
 
 from ee_switch_debug.top_down_kinematics import (
     apply_inward_radial_offset,
+    build_group_sequential_approach,
     forward_kinematics,
     grasp_marker_rotation_to_ee_rotation,
     interpolate_rotation,
@@ -11,6 +12,7 @@ from ee_switch_debug.top_down_kinematics import (
     plan_fixed_orientation_top_down_sequence,
     plan_top_down_sequence,
     rotation_distance,
+    solve_joint23_rho_z,
     solve_pose_ik,
 )
 
@@ -268,3 +270,91 @@ def test_fixed_orientation_plan_fails_when_required_fraction_is_unreachable():
 
     assert not plan.success
     assert "common fixed orientation" in plan.message
+
+
+def test_joint23_solver_keeps_yaw_and_wrist_fixed():
+    seed = np.array([0.2, -1.2, 1.8, -0.4, 1.0, -0.7])
+    target_joints = np.array([0.2, -0.8, 1.3, -0.4, 1.0, -0.7])
+    target_position, _ = forward_kinematics(target_joints)
+
+    result = solve_joint23_rho_z(
+        target_position,
+        seed,
+        [-3.14] * 6,
+        [3.14] * 6,
+    )
+
+    assert result.success, result.message
+    assert np.allclose(
+        result.joints[[0, 3, 4, 5]],
+        seed[[0, 3, 4, 5]],
+    )
+    solved_position, _ = forward_kinematics(result.joints)
+    assert abs(
+        np.hypot(*solved_position[:2]) - np.hypot(*target_position[:2])
+    ) < 0.005
+    assert abs(solved_position[2] - target_position[2]) < 0.005
+
+
+def test_joint23_solver_rejects_invalid_inactive_joint_without_changing_it():
+    seed = np.array([3.5, -1.2, 1.8, -0.4, 1.0, -0.7])
+
+    result = solve_joint23_rho_z(
+        [0.3, 0.0, 0.4],
+        seed,
+        [-3.14] * 6,
+        [3.14] * 6,
+    )
+
+    assert not result.success
+    assert result.joints[0] == seed[0]
+    assert np.allclose(result.joints[3:], seed[3:])
+
+
+def test_joint23_solver_rejects_unreachable_target_within_active_limits():
+    result = solve_joint23_rho_z(
+        [5.0, 0.0, 5.0],
+        [0.0] * 6,
+        [-1.0] * 6,
+        [1.0] * 6,
+    )
+
+    assert not result.success
+    assert np.all(result.joints[1:3] >= -1.0)
+    assert np.all(result.joints[1:3] <= 1.0)
+
+
+def test_group_sequential_approach_assigns_only_requested_joint_groups():
+    requested_rotation = grasp_marker_rotation_to_ee_rotation(
+        LIVE_MARKER_ROTATION
+    )
+    fixed_plan = plan_fixed_orientation_top_down_sequence(
+        LIVE_GRASP_POSITION,
+        requested_rotation,
+        current_joints=LIVE_HOME,
+        lower_limits=LOWER,
+        upper_limits=UPPER,
+        clearance=0.10,
+        radial_inward_offset=0.025,
+        minimum_orientation_fraction=0.50,
+        orientation_search_steps=20,
+        maximum_xy_deviation=0.015,
+        maximum_orientation_deviation=0.035,
+    )
+    assert fixed_plan.success, fixed_plan.message
+
+    plan = build_group_sequential_approach(
+        fixed_plan,
+        current_joints=LIVE_HOME,
+        lower_limits=LOWER,
+        upper_limits=UPPER,
+        minimum_clearance=0.08,
+    )
+
+    assert plan.success, plan.message
+    assert plan.yaw_joints[0] == plan.pregrasp_joints[0]
+    assert np.allclose(plan.yaw_joints[1:], LIVE_HOME[1:])
+    assert plan.arm_joints[0] == plan.yaw_joints[0]
+    assert np.allclose(plan.arm_joints[3:], LIVE_HOME[3:])
+    assert plan.pregrasp_joints[0] == plan.yaw_joints[0]
+    assert not np.allclose(plan.arm_joints[1:3], plan.pregrasp_joints[1:3])

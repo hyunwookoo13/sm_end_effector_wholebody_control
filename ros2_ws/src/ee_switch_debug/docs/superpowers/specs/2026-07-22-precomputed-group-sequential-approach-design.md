@@ -42,15 +42,16 @@ Before motion, a new staged approach planner produces three path sections:
 2. **ARM_POSITION:** keep Joint 1 and Joint 4 through Joint 6 fixed. Solve only
    Joint 2 and Joint 3 for the pregrasp radial distance and height. The planar
    two-joint solver minimizes rho/Z error and rejects joint-limit violations.
-3. **WRIST_ALIGN:** interpolate Joint 4 through Joint 6 toward the selected
-   grasp orientation. At each wrist sample, re-solve only Joint 2 and Joint 3
-   to keep the EE at the pregrasp rho/Z position. Joint 1 remains fixed.
+3. **WRIST_ALIGN:** move Joint 4 through Joint 6 toward the selected grasp
+   orientation while Joint 2 and Joint 3 move from their restricted-solver
+   endpoint to the validated final pregrasp compensation. Joint 1 remains
+   fixed. This is one compact segment rather than stop-and-go waypoints.
 
-Every section is fully generated before execution. A section is rejected if a
-restricted solve fails, a hard joint bound is exceeded, EE clearance drops
-below the configured pregrasp safety region, or consecutive joint steps exceed
-their configured limits. There is no live perception or target-TF feedback
-after planning.
+Every section endpoint is generated before execution, and 31 FK samples of the
+actual interpolated sections are validated. A section is rejected if a
+restricted solve fails, a hard joint bound is exceeded, or EE clearance drops
+below the configured pregrasp safety region. There is no live perception or
+target-TF feedback after planning.
 
 ## Execution
 
@@ -61,7 +62,7 @@ YAW -> ARM_POSITION -> WRIST_ALIGN -> PREGRASP_VERIFY
     -> DESCEND -> GRASP -> LIFT -> HOME -> HOLD
 ```
 
-Each stage follows only its precomputed waypoints using existing bounded
+Each stage follows only its precomputed endpoint using existing bounded
 velocity, acceleration, soft-limit slowdown, and measured-joint completion
 checks. `PREGRASP_VERIFY` checks the final EE position and orientation from
 measured joints. Failure holds the open gripper above the object; it never
