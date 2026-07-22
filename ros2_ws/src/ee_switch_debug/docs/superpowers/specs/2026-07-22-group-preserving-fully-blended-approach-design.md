@@ -93,7 +93,9 @@ group timing and the geometric path remain unchanged.
 Before any motion, at least 101 samples of the exact composed path are checked
 for:
 
-- hard joint limits and PICK-start excursion limits;
+- hard joint limits and PICK-start excursion limits. A measured start may use
+  the existing `0.01 rad` encoder/limit tolerance, but the path may never move
+  farther outside the limit and its endpoint must be inside the hard limits;
 - configured per-joint velocity and acceleration limits after time scaling;
 - EE height above grasp FK Z plus the configured minimum approach clearance;
 - finite joint values and a continuous path from measured start to pregrasp;
