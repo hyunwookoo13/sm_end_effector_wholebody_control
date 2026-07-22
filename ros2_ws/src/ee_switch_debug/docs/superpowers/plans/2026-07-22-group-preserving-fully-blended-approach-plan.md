@@ -13,7 +13,7 @@
 - Target generation, joint ownership, and temporal blending remain separate.
 - Joint1 owns index 0; the position group owns indices 1 and 2; the orientation group owns indices 3 through 5.
 - No runtime whole-arm IK, Jacobian controller, live perception, or target-TF update may steer the approach after PICK latches its snapshot.
-- Joint2/3 overhead contribution completes at normalized time `0.75`; compensation begins at `0.45`.
+- Joint2/3 overhead contribution completes at normalized time `0.75`; compensation begins at `0.10` so it keeps pace with wrist motion.
 - Validate the exact composed path at 101 samples and time-scale it against existing per-joint velocity limits and `top_down_stage_acceleration`.
 - A measured start may use at most the existing `0.01 rad` limit tolerance; the path may not move farther outside and must end inside hard limits.
 - `PREGRASP_VERIFY`, DESCEND, GRASP, LIFT, the measured 6 cm HOME handoff, frozen PICK target, RESET, and stopped mobile base remain unchanged.
@@ -29,8 +29,8 @@
 - Create: `ros2_ws/src/ee_switch_debug/test/test_group_blended_trajectory.py`
 
 **Interfaces:**
-- Produces: immutable `GroupBlendedTrajectory(start, yaw, arm, pregrasp, duration, arm_completion=0.75, compensation_start=0.45)`.
-- Produces: `compose_group_blended_path(start, yaw, arm, pregrasp, progress, arm_completion=0.75, compensation_start=0.45) -> tuple[np.ndarray, np.ndarray, np.ndarray]`; outputs are position, `dq/ds`, and `d2q/ds2`.
+- Produces: immutable `GroupBlendedTrajectory(start, yaw, arm, pregrasp, duration, arm_completion=0.75, compensation_start=0.10)`.
+- Produces: `compose_group_blended_path(start, yaw, arm, pregrasp, progress, arm_completion=0.75, compensation_start=0.10) -> tuple[np.ndarray, np.ndarray, np.ndarray]`; outputs are position, `dq/ds`, and `d2q/ds2`.
 - Produces: `plan_group_blended_trajectory(start, yaw, arm, pregrasp, velocity_limits, acceleration_limit, minimum_duration, derivative_samples=1001) -> GroupBlendedTrajectory`.
 - Produces: `sample_group_blended_trajectory(trajectory, elapsed) -> tuple[np.ndarray, bool]`.
 
@@ -119,7 +119,7 @@ Joint2/3 as:
 q23 = start23 + A * (arm23 - start23) + C * (pregrasp23 - arm23)
 ```
 
-where `A` uses `[0, 0.75]` and `C` uses `[0.45, 1]`. Apply the same linear
+where `A` uses `[0, 0.75]` and `C` uses `[0.10, 1]`. Apply the same linear
 combination to the first and second normalized derivatives.
 
 - [ ] **Step 4: Write failing time-scaling tests**

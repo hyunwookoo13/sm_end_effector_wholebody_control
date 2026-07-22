@@ -6,6 +6,12 @@ from typing import Sequence
 
 import numpy as np
 
+from ee_switch_debug.group_blended_trajectory import (
+    GroupBlendedTrajectory,
+    plan_group_blended_trajectory,
+    sample_group_blended_trajectory,
+)
+
 
 JOINT_AXES = ("z", "y", "y", "y", "z", "y")
 JOINT_TRANSLATIONS = np.array(
@@ -47,6 +53,7 @@ class TopDownPlan:
     grasp_joints: np.ndarray = field(default_factory=lambda: np.zeros(6, dtype=float))
     yaw_joints: np.ndarray = field(default_factory=lambda: np.zeros(6, dtype=float))
     arm_joints: np.ndarray = field(default_factory=lambda: np.zeros(6, dtype=float))
+    blended_approach: GroupBlendedTrajectory | None = None
     selected_rotation: np.ndarray = field(default_factory=lambda: np.eye(3, dtype=float))
     orientation_fraction: float = 0.0
     message: str = ""
@@ -510,6 +517,30 @@ def solve_joint23_rho_z(
     )
 
 
+def _solve_group_approach_endpoints(
+    fixed_plan: TopDownPlan,
+    current: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, str]:
+    """Build group-owned yaw and restricted Joint2/3 endpoints."""
+    pregrasp = np.asarray(fixed_plan.pregrasp_joints, dtype=float)
+    yaw = current.copy()
+    yaw[0] = pregrasp[0]
+    pregrasp_position, _ = forward_kinematics(pregrasp)
+    arm_result = solve_joint23_rho_z(
+        pregrasp_position,
+        yaw,
+        lower,
+        upper,
+    )
+    return (
+        yaw,
+        arm_result.joints.copy(),
+        "" if arm_result.success else arm_result.message,
+    )
+
+
 def build_group_sequential_approach(
     fixed_plan: TopDownPlan,
     current_joints: Sequence[float],
@@ -530,23 +561,19 @@ def build_group_sequential_approach(
     if any(values.shape != (6,) for values in (current, lower, upper, pregrasp, grasp)):
         raise ValueError("group approach joints and limits must contain six values")
 
-    yaw = current.copy()
-    yaw[0] = pregrasp[0]
-    pregrasp_position, _ = forward_kinematics(pregrasp)
-    arm_result = solve_joint23_rho_z(
-        pregrasp_position,
-        yaw,
+    yaw, arm, endpoint_error = _solve_group_approach_endpoints(
+        fixed_plan,
+        current,
         lower,
         upper,
     )
-    if not arm_result.success:
+    if endpoint_error:
         return replace(
             fixed_plan,
             success=False,
             yaw_joints=yaw,
-            message=f"ARM_POSITION {arm_result.message}",
+            message=f"ARM_POSITION {endpoint_error}",
         )
-    arm = arm_result.joints.copy()
 
     grasp_position, _ = forward_kinematics(grasp)
     minimum_z = float(grasp_position[2]) + max(0.0, float(minimum_clearance))
@@ -594,6 +621,144 @@ def build_group_sequential_approach(
         message=(
             "planned restricted joint-group approach and fixed descent; "
             f"orientation_fraction={fixed_plan.orientation_fraction:.3f}"
+        ),
+    )
+
+
+def build_group_blended_approach(
+    fixed_plan: TopDownPlan,
+    current_joints: Sequence[float],
+    lower_limits: Sequence[float],
+    upper_limits: Sequence[float],
+    velocity_limits: Sequence[float],
+    acceleration_limit: float,
+    minimum_duration: float,
+    minimum_clearance: float,
+    sample_count: int = 101,
+) -> TopDownPlan:
+    """Build and validate one fully blended joint-group approach."""
+    if not fixed_plan.success:
+        return fixed_plan
+    current = np.asarray(current_joints, dtype=float)
+    lower = np.asarray(lower_limits, dtype=float)
+    upper = np.asarray(upper_limits, dtype=float)
+    pregrasp = np.asarray(fixed_plan.pregrasp_joints, dtype=float)
+    grasp = np.asarray(fixed_plan.grasp_joints, dtype=float)
+    values = (current, lower, upper, pregrasp, grasp)
+    if any(value.shape != (6,) for value in values):
+        raise ValueError("group approach joints and limits must contain six values")
+    if not all(np.all(np.isfinite(value)) for value in values):
+        return replace(
+            fixed_plan,
+            success=False,
+            message="blended approach contains non-finite input",
+        )
+    if np.any(lower > upper):
+        return replace(
+            fixed_plan,
+            success=False,
+            message="blended approach has invalid joint limits",
+        )
+    measured_margin = 0.01
+    if np.any(current < lower - measured_margin) or np.any(
+        current > upper + measured_margin
+    ):
+        return replace(
+            fixed_plan,
+            success=False,
+            message="blended approach start exceeds measured joint tolerance",
+        )
+
+    yaw, arm, endpoint_error = _solve_group_approach_endpoints(
+        fixed_plan,
+        current,
+        lower,
+        upper,
+    )
+    if endpoint_error:
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            arm_joints=arm,
+            message=f"ARM_POSITION {endpoint_error}",
+        )
+    try:
+        trajectory = plan_group_blended_trajectory(
+            current,
+            yaw,
+            arm,
+            pregrasp,
+            velocity_limits,
+            acceleration_limit,
+            minimum_duration,
+        )
+    except ValueError as error:
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            arm_joints=arm,
+            message=f"blended approach {error}",
+        )
+
+    if np.any(pregrasp < lower - 1e-9) or np.any(pregrasp > upper + 1e-9):
+        return replace(
+            fixed_plan,
+            success=False,
+            yaw_joints=yaw,
+            arm_joints=arm,
+            message="blended approach pregrasp exceeds hard joint limits",
+        )
+    allowed_lower = np.minimum(lower, current)
+    allowed_upper = np.maximum(upper, current)
+    grasp_position, _ = forward_kinematics(grasp)
+    minimum_z = float(grasp_position[2]) + max(0.0, float(minimum_clearance))
+    for elapsed in np.linspace(
+        0.0,
+        trajectory.duration,
+        max(3, int(sample_count)),
+    ):
+        joints, _ = sample_group_blended_trajectory(trajectory, elapsed)
+        if np.any(~np.isfinite(joints)):
+            return replace(
+                fixed_plan,
+                success=False,
+                yaw_joints=yaw,
+                arm_joints=arm,
+                message="blended approach generated non-finite joints",
+            )
+        if np.any(joints < allowed_lower - 1e-9) or np.any(
+            joints > allowed_upper + 1e-9
+        ):
+            return replace(
+                fixed_plan,
+                success=False,
+                yaw_joints=yaw,
+                arm_joints=arm,
+                message="blended approach moves farther outside joint limits",
+            )
+        position, _ = forward_kinematics(joints)
+        if float(position[2]) < minimum_z - 1e-9:
+            return replace(
+                fixed_plan,
+                success=False,
+                yaw_joints=yaw,
+                arm_joints=arm,
+                message=(
+                    "blended approach clearance violation: "
+                    f"height={position[2]:.4f} m, minimum={minimum_z:.4f} m"
+                ),
+            )
+
+    return replace(
+        fixed_plan,
+        yaw_joints=yaw,
+        arm_joints=arm,
+        blended_approach=trajectory,
+        message=(
+            "planned group-preserving blended approach; "
+            f"duration={trajectory.duration:.3f} s"
         ),
     )
 

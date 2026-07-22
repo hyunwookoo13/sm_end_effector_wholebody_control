@@ -14,7 +14,7 @@ class GroupBlendedTrajectory:
     pregrasp: np.ndarray
     duration: float
     arm_completion: float = 0.75
-    compensation_start: float = 0.45
+    compensation_start: float = 0.10
 
 
 def _compact_window(
@@ -74,7 +74,7 @@ def compose_group_blended_path(
     pregrasp: Sequence[float],
     progress: float,
     arm_completion: float = 0.75,
-    compensation_start: float = 0.45,
+    compensation_start: float = 0.10,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Compose owned joint-group contributions on one normalized timeline."""
     start_array, yaw_array, arm_array, pregrasp_array = _group_endpoint_arrays(

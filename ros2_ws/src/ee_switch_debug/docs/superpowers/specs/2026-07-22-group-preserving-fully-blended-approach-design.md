@@ -57,7 +57,7 @@ q23(s) = q23_start
 ```
 
 `A(s)` is the overhead-position contribution. It starts at `s=0` and reaches
-one at `s=0.75`. `C(s)` is wrist-position compensation. It starts at `s=0.45`
+one at `s=0.75`. `C(s)` is wrist-position compensation. It starts at `s=0.10`
 and reaches one at `s=1.0`. Both use compact easing within their windows.
 
 Because the contribution windows overlap, Joint 2/3 do not stop at
@@ -132,7 +132,8 @@ silently choose one.
 The initial timing constants are fixed to:
 
 - overhead-position completion: `s=0.75`;
-- Joint 2/3 compensation start: `s=0.45`;
+- Joint 2/3 compensation start: `s=0.10`, selected because the recorded live
+  geometry loses clearance when wrist motion outruns Joint 2/3 compensation;
 - path validation samples: 101.
 
 These become named ROS parameters only if simulator evidence shows that target
