@@ -12,7 +12,7 @@ def generate_launch_description():
     nav2_condition = IfCondition(LaunchConfiguration("enable_nav2"))
 
     camera_tf_node = Node(
-        package="ee_switch_debug",
+        package="sm_ee_wholebody_control",
         executable="fixed_camera_tf_publisher",
         name="rsd455_fixed_camera_tf_publisher",
         output="screen",
@@ -95,7 +95,7 @@ def generate_launch_description():
     )
 
     task_manager = Node(
-        package="ee_switch_debug",
+        package="sm_task_orchestrator",
         executable="pick_place_task_manager",
         name="pick_place_task_manager",
         output="screen",
@@ -245,7 +245,7 @@ def generate_launch_description():
     )
 
     controller = Node(
-        package="ee_switch_debug",
+        package="sm_ee_wholebody_control",
         executable="arm_yaw_rho_z_position_controller",
         name="arm_yaw_rho_z_position_controller",
         output="screen",
@@ -334,7 +334,7 @@ def generate_launch_description():
                 "controller_config_file",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("ee_switch_debug"),
+                        FindPackageShare("sm_ee_wholebody_control"),
                         "config",
                         "arm_position_target_in.yaml",
                     ]

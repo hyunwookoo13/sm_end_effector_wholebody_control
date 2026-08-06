@@ -31,7 +31,7 @@ def generate_launch_description():
     )
 
     bridge = Node(
-        package="ee_switch_debug",
+        package="sm_ee_wholebody_control",
         executable="grasp_target_tf_bridge",
         name="grasp_target_tf_bridge",
         output="screen",
@@ -55,7 +55,7 @@ def generate_launch_description():
     )
 
     controller = Node(
-        package="ee_switch_debug",
+        package="sm_ee_wholebody_control",
         executable="arm_yaw_rho_z_position_controller",
         name="arm_yaw_rho_z_position_controller",
         output="screen",
@@ -104,7 +104,7 @@ def generate_launch_description():
                 "controller_config_file",
                 default_value=PathJoinSubstitution(
                     [
-                        FindPackageShare("ee_switch_debug"),
+                        FindPackageShare("sm_ee_wholebody_control"),
                         "config",
                         "arm_position_target_in.yaml",
                     ]

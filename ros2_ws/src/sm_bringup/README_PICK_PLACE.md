@@ -10,7 +10,7 @@ whole-body controller performs the final object-relative alignment.
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py \
+ros2 launch sm_bringup natural_language_pick_place.launch.py \
   autostart:=false \
   enable_nav2:=true
 ```
@@ -45,7 +45,7 @@ One workspace/table pick-and-place. This is the stable structure checkpointed on
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch ee_switch_debug florence_pick_place_control.launch.py \
+ros2 launch sm_bringup florence_pick_place_control.launch.py \
   publish_fixed_camera_tf:=false \
   pick_object:=can \
   place_object:=box \
@@ -69,7 +69,7 @@ requested pick/place target.
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py \
+ros2 launch sm_bringup natural_language_pick_place.launch.py \
   publish_fixed_camera_tf:=false \
   pick_object:=can \
   place_object:=box \
@@ -136,7 +136,7 @@ Run the long-range launch in wait-for-command mode:
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py autostart:=false
+ros2 launch sm_bringup natural_language_pick_place.launch.py autostart:=false
 ```
 
 Option 1: send a natural-language command directly:
@@ -200,7 +200,7 @@ not fall back to a different object.
 The old alias parser is available only as an explicit compatibility mode:
 
 ```bash
-ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py \
+ros2 launch sm_bringup natural_language_pick_place.launch.py \
   use_local_llm:=false \
   use_rule_task_parser:=true
 ```

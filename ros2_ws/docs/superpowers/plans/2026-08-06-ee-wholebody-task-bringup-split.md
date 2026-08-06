@@ -6,7 +6,7 @@
 
 **Architecture:** Move the existing Pick/Place state machine and Nav2 goal geometry into the orchestrator, move EE-targeted arm/base controllers and their resources into the control package, and move cross-package launch composition into a logic-free bringup package. Preserve every runtime node name, topic, action, frame, parameter default, QoS choice, and controller value; only ownership/import/resource paths change.
 
-**Tech Stack:** ROS 2 Humble, `ament_python`, `ament_cmake`, Python 3, `rclpy`, Nav2, ROS 2 launch, pytest, colcon, Isaac Sim ROS bridge.
+**Tech Stack:** ROS 2 Humble, `ament_python`, Python 3, `rclpy`, Nav2, ROS 2 launch, pytest, colcon, Isaac Sim ROS bridge.
 
 ## Global Constraints
 
@@ -245,7 +245,8 @@ git commit -m "refactor: extract ee wholebody control package"
 ### Task 4: Create Logic-Free `sm_bringup`
 
 **Files:**
-- Create: `ros2_ws/src/sm_bringup/{package.xml,CMakeLists.txt}`
+- Create: `ros2_ws/src/sm_bringup/{package.xml,setup.py}`
+- Create: `ros2_ws/src/sm_bringup/resource/sm_bringup`
 - Create: `ros2_ws/src/sm_bringup/launch/natural_language_pick_place.launch.py`
 - Create: `ros2_ws/src/sm_bringup/launch/florence_long_range_pick_place_control.launch.py`
 - Move: `florence_grasp_position_control.launch.py` and `florence_pick_place_control.launch.py` into `sm_bringup/launch/`.
@@ -282,18 +283,23 @@ def test_canonical_launch_has_new_owners_only():
 
 Expected: FAIL before package creation.
 
-- [ ] **Step 2: Create an `ament_cmake` launch-only package**
+- [ ] **Step 2: Create an `ament_python` launch-only package**
 
-Declare `ament_cmake`, `launch`, `launch_ros`, and the seven runtime packages. Use:
+Declare `ament_python`, `launch`, `launch_ros`, and the seven runtime packages. Install no Python runtime module or console script; `setup.py` installs only the manifest, README, resource marker, and launch files:
 
-```cmake
-cmake_minimum_required(VERSION 3.8)
-project(sm_bringup)
-find_package(ament_cmake REQUIRED)
-install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
-install(FILES README_PICK_PLACE.md DESTINATION share/${PROJECT_NAME})
-ament_package()
+```python
+setup(
+    name="sm_bringup",
+    packages=[],
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/sm_bringup"]),
+        ("share/sm_bringup", ["package.xml", "README_PICK_PLACE.md"]),
+        ("share/sm_bringup/launch", glob("launch/*.launch.py")),
+    ],
+)
 ```
+
+This follows the workspace's working package pattern and avoids the host Miniforge interpreter being selected by `ament_cmake` without ROS `catkin_pkg`.
 
 - [ ] **Step 3: Move integration launches and replace owners only**
 
@@ -392,7 +398,7 @@ Document all eight final packages.
 
 ```bash
 rg -n "from ee_switch_debug|import ee_switch_debug|package=[\"']ee_switch_debug|FindPackageShare\([\"']ee_switch_debug" ros2_ws/src
-rg -n "ee_switch_debug" ros2_ws/src/*/{package.xml,setup.py,setup.cfg,CMakeLists.txt} 2>/dev/null
+rg -n "ee_switch_debug" ros2_ws/src/*/{package.xml,setup.py,setup.cfg} 2>/dev/null
 ```
 
 Expected: no matches. Then remove only the verified legacy packaging and empty directories; do not touch `dds_setting/`.
