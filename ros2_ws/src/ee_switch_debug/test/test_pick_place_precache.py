@@ -82,7 +82,10 @@ def test_place_target_is_cached_while_pick_is_in_progress():
     manager = make_manager_without_ros_node()
     manager.phase = "PICK"
 
-    manager.on_detections(String(data=json.dumps(detection_payload())), "/sm_florence_2_vlm_place/detections")
+    manager.on_detections(
+        String(data=json.dumps(detection_payload())),
+        "/sm_florence_2_vlm_place/detections",
+    )
 
     assert manager.place_transform == {
         "source_frame": "world",
@@ -149,7 +152,10 @@ def test_pick_detection_orientation_overrides_grasp_orientation():
     manager = make_manager_without_ros_node()
     manager.phase = "FIND_PICK"
 
-    manager.on_detections(String(data=json.dumps(pick_detection_payload())), "/sm_florence_2_vlm/detections")
+    manager.on_detections(
+        String(data=json.dumps(pick_detection_payload())),
+        "/sm_florence_2_vlm/detections",
+    )
 
     assert manager.pick_orientation == approx((0.0, 0.0, 0.5, 0.8660254))
     assert manager.pick_orientation_frame == "rsd455_color_optical_frame"
@@ -161,7 +167,12 @@ def test_pick_detection_orientation_overrides_grasp_orientation():
     grasp.pose.position.z = 0.7
     grasp.pose.orientation.w = 1.0
     manager.is_fresh_grasp_message = lambda msg, now_ns: True
-    manager.get_clock = lambda: type("Clock", (), {"now": lambda self: type("Now", (), {"nanoseconds": 20_000})()})()
+    now = type("Now", (), {"nanoseconds": 20_000})()
+    manager.get_clock = lambda: type(
+        "Clock",
+        (),
+        {"now": lambda self: now},
+    )()
 
     manager.on_grasp_best(grasp, "/sm_grasping/grasp_best")
 

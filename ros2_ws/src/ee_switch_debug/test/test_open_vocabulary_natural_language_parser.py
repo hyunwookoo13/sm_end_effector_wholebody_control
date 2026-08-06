@@ -3,7 +3,10 @@ import threading
 
 from std_msgs.msg import String
 
-from ee_switch_debug.natural_language_task_parser import NaturalLanguageTaskParser
+from ee_switch_debug.natural_language_task_parser import (
+    DEFAULT_OLLAMA_MODEL,
+    NaturalLanguageTaskParser,
+)
 
 
 def make_parser_without_ros_node():
@@ -86,6 +89,18 @@ def test_validate_result_rejects_equal_queries():
     assert result == (False, "pick and place targets are the same", None, None)
 
 
+def test_validate_result_rejects_unresolved_visual_references():
+    result = make_parser_without_ros_node().validate_result(
+        {"pick": "it", "place": "there", "needs_clarification": False}
+    )
+
+    assert result[0] is False
+
+
+def test_default_model_has_enough_capacity_for_multilingual_grounding():
+    assert DEFAULT_OLLAMA_MODEL == "gemma3:4b"
+
+
 def test_natural_language_uses_ollama_before_rules():
     parser = make_message_parser()
     parser.parse_with_ollama = lambda text: {
@@ -132,11 +147,25 @@ def test_model_clarification_does_not_fall_back_to_rules():
         AssertionError("rules called after clarification")
     )
 
-    parser.on_natural_language_task(String(data="그걸 저기에 놓아줘"))
+    parser.on_natural_language_task(String(data="옮겨줘"))
 
     assert parser.task_pub.messages == []
     status = json.loads(parser.status_pub.messages[-1].data)
     assert status["reason"] == "unresolved pronoun"
+
+
+def test_unresolved_input_reference_is_rejected_before_ollama():
+    parser = make_message_parser()
+    parser.parse_with_ollama = lambda text: (_ for _ in ()).throw(
+        AssertionError("Ollama called for an unresolved reference")
+    )
+
+    parser.on_natural_language_task(String(data="그걸 저기에 놓아줘"))
+
+    assert parser.task_pub.messages == []
+    status = json.loads(parser.status_pub.messages[-1].data)
+    assert status["ok"] is False
+    assert status["reason"] == "unresolved reference in command"
 
 
 def test_direct_json_bypasses_ollama():
@@ -159,7 +188,7 @@ def test_direct_json_bypasses_ollama():
 def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
     parser = make_parser_without_ros_node()
     parser.ollama_url = "http://127.0.0.1:11434/api/chat"
-    parser.model = "gemma3:1b"
+    parser.model = DEFAULT_OLLAMA_MODEL
     parser.request_timeout_sec = 5.0
     captured = {}
 
@@ -199,15 +228,23 @@ def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
     assert captured["body"]["keep_alive"] == "30m"
     assert captured["body"]["options"]["num_ctx"] == 2048
     assert captured["body"]["options"]["num_predict"] == 64
+    assert captured["body"]["format"]["type"] == "object"
+    assert set(captured["body"]["format"]["required"]) == {
+        "pick",
+        "place",
+        "needs_clarification",
+        "reason",
+    }
     system_prompt = captured["body"]["messages"][0]["content"]
     assert "Allowed objects" not in system_prompt
     assert "visual noun phrase" in system_prompt
+    assert '"pick":"orange"' not in system_prompt
 
 
 def test_warm_ollama_model_loads_without_generating_text(monkeypatch):
     parser = make_parser_without_ros_node()
     parser.ollama_url = "http://127.0.0.1:11434/api/chat"
-    parser.model = "gemma3:1b"
+    parser.model = DEFAULT_OLLAMA_MODEL
     parser.model_warmup_timeout_sec = 30.0
     parser.model_warmup_done = threading.Event()
     parser.model_warmup_error = ""
@@ -237,7 +274,7 @@ def test_warm_ollama_model_loads_without_generating_text(monkeypatch):
 
     assert captured["url"] == "http://127.0.0.1:11434/api/generate"
     assert captured["body"] == {
-        "model": "gemma3:1b",
+        "model": DEFAULT_OLLAMA_MODEL,
         "prompt": "",
         "stream": False,
         "keep_alive": "30m",

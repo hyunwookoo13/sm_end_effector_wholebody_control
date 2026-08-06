@@ -122,7 +122,7 @@ Install Ollama and pull the local parser model:
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull gemma3:1b
+ollama pull gemma3:4b
 ```
 
 Run the long-range launch in wait-for-command mode:
@@ -166,7 +166,7 @@ blue can | red can | yellow box | pink box | green cup
 ```
 
 The default natural-language path is open vocabulary. Local Ollama runs
-`gemma3:1b` once per command and converts Korean or English input into concise
+`gemma3:4b` once per command and converts Korean or English input into concise
 English visual queries. The queries are not checked against a fixed object-name
 list, so a new object name does not require a parser alias. For example:
 

@@ -4,7 +4,7 @@
 
 **Goal:** Make local Gemma the primary natural-language task interpreter and pass previously unseen visual object queries to YOLOE without a fixed object-name allowlist.
 
-**Architecture:** The parser asks `gemma3:1b` for one concise English pick query and one concise English place query, validates only their structure, and publishes the existing `/pick_place_task` JSON. The current task manager and YOLOE pipeline ground those queries before navigation, so Nav2, precision control, and arm control remain unchanged.
+**Architecture:** The parser asks `gemma3:4b` for one concise English pick query and one concise English place query, validates their structure and unresolved references, and publishes the existing `/pick_place_task` JSON. The current task manager and YOLOE pipeline ground those queries before navigation, so Nav2, precision control, and arm control remain unchanged. The original 1B candidate was replaced after live multilingual tests showed attribute loss and target hallucination.
 
 **Tech Stack:** ROS 2 Humble, Python 3.10, `rclpy`, Ollama `/api/chat`, Gemma 3 1B, YOLOE, pytest, colcon.
 
@@ -227,7 +227,7 @@ Expected: PASS without production controller changes.
 
 - [ ] **Step 3: Update launch defaults**
 
-Remove the `allowed_objects` launch parameter. Add `use_rule_task_parser` with default `false` and pass it to `use_rule_fallback`. Keep `use_local_llm=true`, `local_llm_model=gemma3:1b`, and the existing Ollama URL.
+Remove the `allowed_objects` launch parameter. Add `use_rule_task_parser` with default `false` and pass it to `use_rule_fallback`. Keep `use_local_llm=true`, set `local_llm_model=gemma3:4b`, and retain the existing Ollama URL.
 
 - [ ] **Step 4: Update runtime documentation**
 

@@ -10,6 +10,21 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 
+DEFAULT_OLLAMA_MODEL = "gemma3:4b"
+
+UNRESOLVED_VISUAL_REFERENCES = {
+    "it",
+    "this",
+    "that",
+    "this object",
+    "that object",
+    "there",
+    "here",
+    "this place",
+    "that place",
+}
+
+
 DEFAULT_ALIASES = {
     "can": "can",
     "cans": "can",
@@ -117,7 +132,7 @@ class NaturalLanguageTaskParser(Node):
         self.declare_parameter("task_topic", "/pick_place_task")
         self.declare_parameter("status_topic", "/natural_language_task_status")
         self.declare_parameter("ollama_url", "http://127.0.0.1:11434/api/chat")
-        self.declare_parameter("model", "gemma3:1b")
+        self.declare_parameter("model", DEFAULT_OLLAMA_MODEL)
         self.declare_parameter("request_timeout_sec", 5.0)
         self.declare_parameter("model_warmup_timeout_sec", 30.0)
         self.declare_parameter("warm_model_on_startup", True)
@@ -147,7 +162,12 @@ class NaturalLanguageTaskParser(Node):
 
         self.task_pub = self.create_publisher(String, self.task_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
-        self.create_subscription(String, self.natural_language_topic, self.on_natural_language_task, 10)
+        self.create_subscription(
+            String,
+            self.natural_language_topic,
+            self.on_natural_language_task,
+            10,
+        )
 
         self.model_warmup_done = threading.Event()
         self.model_warmup_error = ""
@@ -187,6 +207,18 @@ class NaturalLanguageTaskParser(Node):
         parsed: dict[str, Any] | None = self.parse_direct_json(text)
         source = "direct_json" if parsed is not None else ""
 
+        if parsed is None and self.contains_unresolved_reference(text):
+            self.publish_status(
+                False,
+                "unresolved reference in command",
+                source="input_safety",
+                text=text,
+            )
+            self.get_logger().warn(
+                f"Natural language task rejected: unresolved reference; text={text!r}"
+            )
+            return
+
         if parsed is None and self.use_ollama:
             source = "ollama"
             try:
@@ -214,7 +246,9 @@ class NaturalLanguageTaskParser(Node):
         if not self.dry_run:
             self.task_pub.publish(String(data=json.dumps(task, ensure_ascii=False)))
         self.publish_status(True, "published", source=source, text=text, **task)
-        self.get_logger().warn(f"Natural language task -> pick={pick}, place={place}, source={source}")
+        self.get_logger().warn(
+            f"Natural language task -> pick={pick}, place={place}, source={source}"
+        )
 
     def parse_direct_json(self, text: str) -> dict[str, Any] | None:
         raw = text.strip()
@@ -226,26 +260,46 @@ class NaturalLanguageTaskParser(Node):
             return None
         return payload if isinstance(payload, dict) else None
 
+    @staticmethod
+    def contains_unresolved_reference(text: str) -> bool:
+        normalized = text.strip().lower()
+        korean_references = r"(그걸|이걸|저걸|그것|이것|저것|거기|여기|저기|그곳|이곳|저곳)"
+        english_references = r"\b(it|there|here|this one|that one|these|those)\b"
+        return bool(
+            re.search(korean_references, normalized)
+            or re.search(english_references, normalized)
+        )
+
     def parse_with_ollama(self, text: str) -> dict[str, Any] | None:
         warmup_done = getattr(self, "model_warmup_done", None)
         if warmup_done is not None and not warmup_done.wait(self.model_warmup_timeout_sec):
             raise TimeoutError("model warmup did not finish")
 
         system_prompt = (
-            "Convert one Korean or English pick-and-place command into JSON. "
-            "Return only JSON and do not restrict objects to a predefined catalog. "
-            "Write pick and place as concise lowercase English visual noun phrases. "
-            "Preserve visual attributes such as color, material, and object class, "
-            "but remove command verbs and Korean particles. "
-            "Set needs_clarification true when either target is missing, a pronoun is "
+            "Extract the complete object-to-pick phrase and destination phrase from one "
+            "Korean or English robot pick-and-place command. Translate each phrase into "
+            "a concise lowercase English visual noun phrase. Preserve every stated visual "
+            "attribute, including color, material, state, and object class; never replace "
+            "or invent an object or attribute. A missing color or material is not ambiguous. "
+            "Set needs_clarification true and leave pick and place empty only when the pick "
+            "object or destination itself is absent, a reference such as it/there is "
             "unresolved, the request is not pick-and-place, or it contains multiple tasks. "
-            "Schema: {\"pick\":\"orange\",\"place\":\"pink box\","
-            "\"needs_clarification\":false,\"reason\":\"\"}"
+            "Set reason to an empty string for a valid command. Return JSON only."
         )
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "pick": {"type": "string"},
+                "place": {"type": "string"},
+                "needs_clarification": {"type": "boolean"},
+                "reason": {"type": "string"},
+            },
+            "required": ["pick", "place", "needs_clarification", "reason"],
+        }
         request_body = {
             "model": self.model,
             "stream": False,
-            "format": "json",
+            "format": response_schema,
             "keep_alive": "30m",
             "options": {
                 "temperature": 0.0,
@@ -319,7 +373,7 @@ class NaturalLanguageTaskParser(Node):
         if start < 0 or end <= start:
             return None
         try:
-            payload = json.loads(raw[start : end + 1])
+            payload = json.loads(raw[start:end + 1])
         except json.JSONDecodeError:
             return None
         return payload if isinstance(payload, dict) else None
@@ -358,7 +412,11 @@ class NaturalLanguageTaskParser(Node):
         non_overlapping: list[tuple[int, int, str]] = []
         for candidate in matches:
             start, end, _ = candidate
-            if any(start < kept_end and end > kept_start for kept_start, kept_end, _ in non_overlapping):
+            overlaps = any(
+                start < kept_end and end > kept_start
+                for kept_start, kept_end, _ in non_overlapping
+            )
+            if overlaps:
                 continue
             non_overlapping.append(candidate)
 
@@ -404,6 +462,8 @@ class NaturalLanguageTaskParser(Node):
         if not query or len(query) > self.max_query_length:
             return ""
         if not re.fullmatch(r"[a-z0-9][a-z0-9 ._'\-]*", query):
+            return ""
+        if query in UNRESOLVED_VISUAL_REFERENCES:
             return ""
         return query if re.search(r"[a-z]", query) else ""
 

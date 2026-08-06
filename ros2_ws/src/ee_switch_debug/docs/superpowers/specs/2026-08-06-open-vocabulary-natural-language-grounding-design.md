@@ -62,7 +62,9 @@ request clarification rather than guess.
 
 1. The console publishes the original instruction on `/natural_language_task`.
 2. The natural-language parser sends the instruction to local Ollama using
-   `gemma3:1b`, JSON output mode, and temperature zero.
+   `gemma3:4b`, a constrained JSON schema, and temperature zero. Live tests
+   rejected the original 1B choice because it dropped visual attributes and
+   invented targets; 4B remained fully GPU-resident alongside Isaac Sim.
 3. Gemma returns exactly one pick query, one place query, and a clarification
    flag. Queries are short, lowercase English noun phrases suitable for visual
    prompting.
