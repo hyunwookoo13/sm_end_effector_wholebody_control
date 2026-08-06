@@ -52,14 +52,12 @@ packages, while also reporting that all system dependencies have been
 satisfied. This is recorded as an environment/rosdep-index warning; no
 dependency declaration was changed to hide it.
 
-### Isaac Sim end-to-end regression: externally pending
+### Isaac Sim end-to-end regression (2026-08-06)
 
-An Isaac Sim Kit process was present (`kit ./kit/kit ./apps/isaacsim.exp.full.kit
---ext-folder ./apps`), but `ros2 node list` discovered no ROS nodes. A safe
-active ROS-bridge stage could therefore not be established, and neither Isaac
-Sim nor its stage was started or modified for this verification.
-
-When a baseline-equivalent Isaac Sim ROS-bridge stage is active, run:
+The user opened the baseline pick-and-place stage and pressed Play. The Isaac
+Sim ROS bridge then published `/clock`, `/joint_states`, `/odom`,
+`/rsd455/rgb`, and `/rsd455/depth` at approximately 33 Hz. The isolated Phase
+1 overlay was launched with:
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/ros2_ws"
@@ -68,14 +66,25 @@ source install_modular_phase1/setup.bash
 ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py autostart:=false enable_nav2:=true
 ```
 
-Capture the relevant ROS log lines while confirming: (1) a Korean
-natural-language command produces the unchanged pick/place JSON; (2) YOLOE
-selects the requested object; (3) Nav2 publishes through
-`/cmd_vel_navigation`; (4) `navigation_cmd_mux` is the only final `/cmd_vel`
-publisher; (5) red-can to yellow-box completes at baseline behavior; (6)
-orange to yellow-box completes at baseline behavior; and (7) a consecutive
-remote task performs the existing safe-retreat behavior. Apple behavior is
-recorded but is not an improvement target for this packaging phase.
+The active graph contained all extracted-package nodes and all four Nav2
+servers reported lifecycle state `active`. `/cmd_vel_navigation` was consumed
+by `navigation_cmd_mux`, and `ros2 topic info /cmd_vel -v` reported exactly one
+publisher: `navigation_cmd_mux`.
+
+The live regression produced the following evidence:
+
+- `빨간색 캔을 노란색 박스에 넣어줘` parsed via Ollama as
+  `{"pick":"red can","place":"yellow box"}`. The task progressed through
+  `HYBRID_PICK: ... PICK:APPROACH`, `PICK: ... PICK:LIFT`, and `DONE`.
+- In the same launch session, `오랜지를 노란색 박스에 넣어줘` parsed via
+  Ollama as `{"pick":"orange","place":"yellow box"}`.
+- The consecutive command first entered `SAFE_RETREAT` while
+  `/base_control_mode` reported `RETREAT`, then progressed through
+  `PICK:APPROACH`, `PICK:LIFT`, `PLACE:APPROACH`, `PLACE:RELEASE`, and `DONE`.
+
+This closes the Phase 1 external runtime gate for red-can, orange, and
+consecutive-task retreat behavior. Apple behavior remains outside this
+packaging phase's improvement scope.
 
 ## Launch argument contract
 
