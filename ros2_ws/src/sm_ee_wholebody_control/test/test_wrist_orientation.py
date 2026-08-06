@@ -1,10 +1,10 @@
 from math import cos, pi, sin
 from pathlib import Path
 
-import ee_switch_debug.arm_yaw_rho_z_position_controller as controller
+import sm_ee_wholebody_control.arm_yaw_rho_z_position_controller as controller
 import rclpy
 
-from ee_switch_debug.arm_yaw_rho_z_position_controller import (
+from sm_ee_wholebody_control.arm_yaw_rho_z_position_controller import (
     compute_wrist_targets_from_orientation,
     is_wrist_aligned_for_phase,
 )

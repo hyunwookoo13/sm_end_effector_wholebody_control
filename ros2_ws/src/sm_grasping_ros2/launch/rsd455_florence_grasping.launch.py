@@ -43,7 +43,7 @@ def generate_launch_description():
     )
 
     camera_tf_node = Node(
-        package="ee_switch_debug",
+        package="sm_ee_wholebody_control",
         executable="fixed_camera_tf_publisher",
         name="rsd455_fixed_camera_tf_publisher",
         output="screen",

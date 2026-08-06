@@ -7,7 +7,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     config_file = PathJoinSubstitution(
         [
-            FindPackageShare("ee_switch_debug"),
+            FindPackageShare("sm_ee_wholebody_control"),
             "config",
             "arm_position_target_in.yaml",
         ]
@@ -16,7 +16,7 @@ def generate_launch_description():
     return LaunchDescription(
         [
             Node(
-                package="ee_switch_debug",
+                package="sm_ee_wholebody_control",
                 executable="arm_yaw_rho_z_position_controller",
                 name="arm_yaw_rho_z_position_controller",
                 output="screen",
