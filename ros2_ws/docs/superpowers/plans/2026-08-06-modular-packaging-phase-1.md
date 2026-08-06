@@ -66,7 +66,8 @@ Run:
 ```bash
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
-python3 -m pytest src/ee_switch_debug/test src/sm_florence_2_vlm_ros2/test src/sm_grasping_ros2/test -q
+source install/setup.bash
+/usr/bin/python3 -m pytest src/ee_switch_debug/test src/sm_florence_2_vlm_ros2/test src/sm_grasping_ros2/test -q
 ```
 
 Expected: all currently collected tests pass. Record the exact passed-test count in the runtime-contract document.
@@ -175,7 +176,7 @@ Run:
 ```bash
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
-python3 -m pytest src/sm_natural_language_task/test/test_package_imports.py -q
+/usr/bin/python3 -m pytest src/sm_natural_language_task/test/test_package_imports.py -q
 ```
 
 Expected: collection fails with `ModuleNotFoundError: No module named 'sm_natural_language_task'`.
@@ -262,7 +263,7 @@ Run:
 ```bash
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
-PYTHONPATH=src/sm_natural_language_task python3 -m pytest src/sm_natural_language_task/test -q
+PYTHONPATH=src/sm_natural_language_task /usr/bin/python3 -m pytest src/sm_natural_language_task/test -q
 ```
 
 Expected: the import test and all moved parser tests pass with the same behavior as Task 1.
@@ -369,7 +370,9 @@ def test_nav2_config_is_installed_from_this_package():
 Run:
 
 ```bash
-python3 -m pytest src/sm_navigation_nav2/test/test_nav2_launch_contract.py -q
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+/usr/bin/python3 -m pytest src/sm_navigation_nav2/test/test_nav2_launch_contract.py -q
 ```
 
 Expected: FAIL because the new launch file and config do not yet exist.
@@ -483,7 +486,10 @@ Add the retained launch dependency on the adapter:
 Run:
 
 ```bash
-python3 -m pytest src/sm_navigation_nav2/test/test_nav2_launch_contract.py \
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+/usr/bin/python3 -m pytest src/sm_navigation_nav2/test/test_nav2_launch_contract.py \
   src/ee_switch_debug/test/test_navigation_geometry.py -q
 colcon build --executor sequential --packages-select sm_navigation_nav2 ee_switch_debug
 source install/setup.bash
@@ -536,7 +542,9 @@ from sm_base_control_manager.navigation_cmd_mux import (
 Run:
 
 ```bash
-PYTHONPATH=src/sm_base_control_manager python3 -m pytest \
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+PYTHONPATH=src/sm_base_control_manager /usr/bin/python3 -m pytest \
   src/sm_base_control_manager/test/test_navigation_cmd_mux.py -q
 ```
 
@@ -573,7 +581,9 @@ Move `navigation_cmd_mux.py` and update only the test import. Do not alter param
 Run:
 
 ```bash
-PYTHONPATH=src/sm_base_control_manager python3 -m pytest \
+cd /home/kiro/Desktop/hw_ws/ros2_ws
+source /opt/ros/humble/setup.bash
+PYTHONPATH=src/sm_base_control_manager /usr/bin/python3 -m pytest \
   src/sm_base_control_manager/test/test_navigation_cmd_mux.py -q
 ```
 
@@ -669,7 +679,8 @@ Run:
 ```bash
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
-python3 -m pytest \
+source install/setup.bash
+/usr/bin/python3 -m pytest \
   src/ee_switch_debug/test \
   src/sm_natural_language_task/test \
   src/sm_navigation_nav2/test \

@@ -5,8 +5,8 @@ layout changes. Tasks 2-5 use it as the compatibility checklist.
 
 ## Baseline verification
 
-- Unit tests: **86 passed** in 0.60s.
-- Build: `colcon build --executor sequential --packages-select ee_switch_debug sm_florence_2_vlm_ros2 sm_grasping_ros2` completed with **3 packages finished** in 1.95s.
+- Unit tests: **86 passed** in 0.54s.
+- Build: `colcon build --executor sequential --packages-select ee_switch_debug sm_florence_2_vlm_ros2 sm_grasping_ros2` completed with **3 packages finished** in 1.80s.
 - Launch argument capture command:
 
   ```bash
@@ -15,11 +15,11 @@ layout changes. Tasks 2-5 use it as the compatibility checklist.
   ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py --show-args
   ```
 
-The test baseline was run after building and sourcing the workspace install so
-that the in-workspace Python packages were importable. The host `python3`
-resolved to `/home/kiro/miniforge3/bin/python3`, which has no `pytest` module;
-the successful baseline therefore used `/usr/bin/python3 -m pytest` after the
-same ROS and workspace setup.
+For this ROS 2 Humble workspace, the canonical test interpreter is
+`/usr/bin/python3`. Source `/opt/ros/humble/setup.bash` and the workspace
+overlay (`install/setup.bash`) before running `/usr/bin/python3 -m pytest` when
+tests import in-workspace packages. The host `python3` resolves to
+`/home/kiro/miniforge3/bin/python3`, which does not provide `pytest`.
 
 ## Launch argument contract
 
