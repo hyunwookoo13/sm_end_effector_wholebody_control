@@ -1,4 +1,4 @@
-from ee_switch_debug.natural_language_task_parser import NaturalLanguageTaskParser
+from sm_natural_language_task.natural_language_task_parser import NaturalLanguageTaskParser
 
 
 def test_default_aliases_support_green_cup_and_pink_box():

@@ -3,7 +3,7 @@ import threading
 
 from std_msgs.msg import String
 
-from ee_switch_debug.natural_language_task_parser import (
+from sm_natural_language_task.natural_language_task_parser import (
     DEFAULT_OLLAMA_MODEL,
     NaturalLanguageTaskParser,
 )

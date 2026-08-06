@@ -256,7 +256,7 @@ def generate_launch_description():
     )
 
     natural_language_task_parser = Node(
-        package="ee_switch_debug",
+        package="sm_natural_language_task",
         executable="natural_language_task_parser",
         name="natural_language_task_parser",
         output="screen",
