@@ -21,6 +21,60 @@ overlay (`install/setup.bash`) before running `/usr/bin/python3 -m pytest` when
 tests import in-workspace packages. The host `python3` resolves to
 `/home/kiro/miniforge3/bin/python3`, which does not provide `pytest`.
 
+## Phase 1 integration verification (2026-08-06)
+
+- Stale executable and Nav2-config reference scans returned no matches.
+- `colcon list` reported all six workspace packages: `ee_switch_debug`,
+  `sm_base_control_manager`, `sm_florence_2_vlm_ros2`, `sm_grasping_ros2`,
+  `sm_natural_language_task`, and `sm_navigation_nav2`.
+- The full source test command completed with **89 passed** in 0.57s.
+- The isolated, sequential build completed with **6 packages finished** in
+  3.29s:
+
+  ```bash
+  source /opt/ros/humble/setup.bash
+  colcon --log-base log_modular_phase1 build --executor sequential \
+    --build-base build_modular_phase1 \
+    --install-base install_modular_phase1
+  ```
+
+- With `/opt/ros/humble/setup.bash` and
+  `install_modular_phase1/setup.bash` sourced, the installed compatibility
+  launch rendered successfully and the extracted executables were present:
+  `sm_natural_language_task natural_language_task_parser`,
+  `sm_natural_language_task natural_language_task_console`, and
+  `sm_base_control_manager navigation_cmd_mux`.
+
+`rosdep check --from-paths src --ignore-src` exited 2 because this host's
+rosdep data cannot locate the `ament_python` key for each of the six
+packages, while also reporting that all system dependencies have been
+satisfied. This is recorded as an environment/rosdep-index warning; no
+dependency declaration was changed to hide it.
+
+### Isaac Sim end-to-end regression: externally pending
+
+An Isaac Sim Kit process was present (`kit ./kit/kit ./apps/isaacsim.exp.full.kit
+--ext-folder ./apps`), but `ros2 node list` discovered no ROS nodes. A safe
+active ROS-bridge stage could therefore not be established, and neither Isaac
+Sim nor its stage was started or modified for this verification.
+
+When a baseline-equivalent Isaac Sim ROS-bridge stage is active, run:
+
+```bash
+source /opt/ros/humble/setup.bash
+source /home/kiro/Desktop/hw_ws/.worktrees/modular-packaging-phase1/ros2_ws/install_modular_phase1/setup.bash
+ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py enable_nav2:=true
+```
+
+Capture the relevant ROS log lines while confirming: (1) a Korean
+natural-language command produces the unchanged pick/place JSON; (2) YOLOE
+selects the requested object; (3) Nav2 publishes through
+`/cmd_vel_navigation`; (4) `navigation_cmd_mux` is the only final `/cmd_vel`
+publisher; (5) red-can to yellow-box completes at baseline behavior; (6)
+orange to yellow-box completes at baseline behavior; and (7) a consecutive
+remote task performs the existing safe-retreat behavior. Apple behavior is
+recorded but is not an improvement target for this packaging phase.
+
 ## Launch argument contract
 
 | Argument | Default |
@@ -81,9 +135,9 @@ The following defaults are explicitly protected: `enable_nav2=false`,
 
 | Capability | Node name | Executable owner | Output/interface |
 |---|---|---|---|
-| Language parser | `natural_language_task_parser` | `ee_switch_debug` | `/pick_place_task`, `/natural_language_task_status` |
-| Navigation | `controller_server`, `planner_server`, `behavior_server`, `bt_navigator` | Nav2 via `ee_switch_debug` launch | `/cmd_vel_navigation`, `navigate_to_pose` |
-| Base arbitration | `navigation_cmd_mux` | `ee_switch_debug` | `/cmd_vel` |
+| Language parser | `natural_language_task_parser` | `sm_natural_language_task` | `/pick_place_task`, `/natural_language_task_status` |
+| Navigation | `controller_server`, `planner_server`, `behavior_server`, `bt_navigator` | `sm_navigation_nav2` | `/cmd_vel_navigation`, `navigate_to_pose` |
+| Base arbitration | `navigation_cmd_mux` | `sm_base_control_manager` | `/cmd_vel` |
 | Task orchestration | `pick_place_task_manager` | `ee_switch_debug` | `/base_control_mode`, `/base_control_blend` |
 | Manipulation | `arm_yaw_rho_z_position_controller` | `ee_switch_debug` | `/joint_position_command`, `/cmd_vel_manipulation` |
 
