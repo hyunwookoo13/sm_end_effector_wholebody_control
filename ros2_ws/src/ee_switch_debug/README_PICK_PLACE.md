@@ -31,6 +31,11 @@ Nav2 publishes `/cmd_vel_navigation`, the manipulation controller publishes
 `/cmd_vel_manipulation`, and `navigation_cmd_mux` is the only node that
 publishes `/cmd_vel`.
 
+After a completed place, a consecutive remote pick reuses the rear-LiDAR-safe
+retreat before Nav2 is allowed to rotate or drive. The default retreat is
+`0.40 m` backward at `0.25 m/s`; a close pick that already satisfies the
+existing Nav2 skip condition proceeds directly without retreating.
+
 ## Near Pick and Place
 
 One workspace/table pick-and-place. This is the stable structure checkpointed on
