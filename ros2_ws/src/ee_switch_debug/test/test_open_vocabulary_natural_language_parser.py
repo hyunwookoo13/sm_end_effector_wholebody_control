@@ -240,14 +240,27 @@ def test_direct_json_bypasses_ollama():
     assert json.loads(parser.status_pub.messages[-1].data)["source"] == "direct_json"
 
 
-def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
+def test_ollama_requests_extract_then_translate_each_target_in_isolation(monkeypatch):
     parser = make_parser_without_ros_node()
     parser.ollama_url = "http://127.0.0.1:11434/api/chat"
     parser.model = DEFAULT_OLLAMA_MODEL
     parser.request_timeout_sec = 5.0
-    captured = {}
+    captured_bodies = []
+    responses = [
+        {
+            "pick_source": "사과",
+            "place_source": "노란색 박스",
+            "needs_clarification": False,
+            "reason": "",
+        },
+        {"query": "apple"},
+        {"query": "yellow box"},
+    ]
 
     class FakeResponse:
+        def __init__(self, content):
+            self.content = content
+
         def __enter__(self):
             return self
 
@@ -258,46 +271,39 @@ def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
             return json.dumps(
                 {
                     "message": {
-                        "content": json.dumps(
-                            {
-                                "pick": "orange",
-                                "place": "pink box",
-                                "needs_clarification": False,
-                                "reason": "",
-                            }
-                        )
+                        "content": json.dumps(self.content)
                     }
                 }
             ).encode("utf-8")
 
     def fake_urlopen(request, timeout):
-        captured["body"] = json.loads(request.data.decode("utf-8"))
-        captured["timeout"] = timeout
-        return FakeResponse()
+        body = json.loads(request.data.decode("utf-8"))
+        captured_bodies.append(body)
+        return FakeResponse(responses[len(captured_bodies) - 1])
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
-    result = parser.parse_with_ollama("오렌지를 분홍색 박스에 넣어줘")
+    result = parser.parse_with_ollama("사과를 노란색 박스에 넣어줘")
 
-    assert result["pick"] == "orange"
-    assert captured["body"]["keep_alive"] == "30m"
-    assert captured["body"]["options"]["num_ctx"] == 2048
-    assert captured["body"]["options"]["num_predict"] == 64
-    assert captured["body"]["format"]["type"] == "object"
-    assert set(captured["body"]["format"]["required"]) == {
+    assert result["pick"] == "apple"
+    assert result["place"] == "yellow box"
+    assert len(captured_bodies) == 3
+    assert all(body["keep_alive"] == "30m" for body in captured_bodies)
+    assert all(body["options"]["num_ctx"] == 2048 for body in captured_bodies)
+    assert set(captured_bodies[0]["format"]["required"]) == {
         "pick_source",
         "place_source",
-        "pick",
-        "place",
         "needs_clarification",
         "reason",
     }
-    system_prompt = captured["body"]["messages"][0]["content"]
-    assert "Allowed objects" not in system_prompt
-    assert "visual noun phrase" in system_prompt
-    assert '"pick":"orange"' not in system_prompt
-    assert "exact character substrings" in system_prompt
-    assert "Never copy" in system_prompt
+    assert captured_bodies[1]["format"]["required"] == ["query"]
+    assert captured_bodies[2]["format"]["required"] == ["query"]
+    assert captured_bodies[1]["messages"][1]["content"] == "사과"
+    assert captured_bodies[2]["messages"][1]["content"] == "노란색 박스"
+    extraction_prompt = captured_bodies[0]["messages"][0]["content"]
+    translation_prompt = captured_bodies[1]["messages"][0]["content"]
+    assert "exact character substrings" in extraction_prompt
+    assert "visual noun phrase" in translation_prompt
 
 
 def test_warm_ollama_model_loads_without_generating_text(monkeypatch):

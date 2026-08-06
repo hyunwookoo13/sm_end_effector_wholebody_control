@@ -289,39 +289,86 @@ class NaturalLanguageTaskParser(Node):
         if warmup_done is not None and not warmup_done.wait(self.model_warmup_timeout_sec):
             raise TimeoutError("model warmup did not finish")
 
+        extracted = self.extract_source_spans(text)
+        if not isinstance(extracted, dict):
+            return None
+        if bool(extracted.get("needs_clarification", False)):
+            return {**extracted, "pick": "", "place": ""}
+
+        sources_valid, source_reason = self.validate_source_spans(text, extracted)
+        if not sources_valid:
+            return {
+                **extracted,
+                "pick": "",
+                "place": "",
+                "needs_clarification": True,
+                "reason": source_reason,
+            }
+
+        pick_source = str(extracted["pick_source"]).strip()
+        place_source = str(extracted["place_source"]).strip()
+        return {
+            **extracted,
+            "pick": self.translate_visual_query(pick_source),
+            "place": self.translate_visual_query(place_source),
+        }
+
+    def extract_source_spans(self, text: str) -> dict[str, Any] | None:
         system_prompt = (
-            "Extract the pick object and destination from one Korean or English robot "
-            "pick-and-place command. pick_source and place_source MUST be exact character "
-            "substrings copied from the user's original command, in the original language; "
-            "never translate these two source fields and omit only Korean particles. "
-            "Translate pick_source and place_source independently into concise lowercase "
-            "English visual noun phrases. Never copy a color, material, state, or object "
-            "class from one source phrase to the other, and never invent an omitted "
-            "attribute. A missing color or material is not ambiguous. "
-            "Set needs_clarification true and leave pick and place empty only when the pick "
-            "object or destination itself is absent, a reference such as it/there is "
-            "unresolved, the request is not pick-and-place, or it contains multiple tasks. "
-            "Set reason to an empty string for a valid command. Return JSON only."
+            "Extract only the pick object phrase and destination phrase from one Korean or "
+            "English pick-and-place command. pick_source and place_source MUST be exact "
+            "character substrings copied from the user's original command in the original "
+            "language; never translate them. When both phrases are present, set "
+            "needs_clarification false and reason to an empty string. If either phrase is "
+            "absent, the request is not pick-and-place, or it contains multiple tasks, set "
+            "needs_clarification true. Return JSON only."
         )
         response_schema = {
             "type": "object",
             "properties": {
                 "pick_source": {"type": "string"},
                 "place_source": {"type": "string"},
-                "pick": {"type": "string"},
-                "place": {"type": "string"},
                 "needs_clarification": {"type": "boolean"},
                 "reason": {"type": "string"},
             },
             "required": [
                 "pick_source",
                 "place_source",
-                "pick",
-                "place",
                 "needs_clarification",
                 "reason",
             ],
         }
+        return self._request_ollama_json(system_prompt, text, response_schema)
+
+    def translate_visual_query(self, source: str) -> str:
+        system_prompt = (
+            "Translate exactly one Korean or English visual noun phrase into a concise "
+            "lowercase English visual noun phrase. Preserve every stated color, material, "
+            "state, and object class. Never add an omitted attribute, command verb, or "
+            "Korean particle. Return JSON only."
+        )
+        response_schema = {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        }
+        translated = self._request_ollama_json(
+            system_prompt,
+            source,
+            response_schema,
+            num_predict=32,
+        )
+        if not isinstance(translated, dict):
+            return ""
+        return str(translated.get("query", "")).strip()
+
+    def _request_ollama_json(
+        self,
+        system_prompt: str,
+        user_text: str,
+        response_schema: dict[str, Any],
+        num_predict: int = 64,
+    ) -> dict[str, Any] | None:
         request_body = {
             "model": self.model,
             "stream": False,
@@ -329,12 +376,12 @@ class NaturalLanguageTaskParser(Node):
             "keep_alive": "30m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 64,
+                "num_predict": num_predict,
                 "num_ctx": 2048,
             },
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text},
+                {"role": "user", "content": user_text},
             ],
         }
         request = urllib.request.Request(
