@@ -118,6 +118,7 @@ class NaturalLanguageTaskParser(Node):
         self.declare_parameter("ollama_url", "http://127.0.0.1:11434/api/chat")
         self.declare_parameter("model", "gemma3:1b")
         self.declare_parameter("request_timeout_sec", 5.0)
+        self.declare_parameter("max_query_length", 80)
         self.declare_parameter(
             "allowed_objects",
             [
@@ -147,6 +148,7 @@ class NaturalLanguageTaskParser(Node):
         self.ollama_url = str(self.get_parameter("ollama_url").value)
         self.model = str(self.get_parameter("model").value)
         self.request_timeout_sec = float(self.get_parameter("request_timeout_sec").value)
+        self.max_query_length = int(self.get_parameter("max_query_length").value)
         self.allowed_objects = {
             str(name).strip().lower()
             for name in self.get_parameter("allowed_objects").value
@@ -368,15 +370,25 @@ class NaturalLanguageTaskParser(Node):
         if bool(payload.get("needs_clarification", False)):
             return False, str(payload.get("reason", "needs clarification")), None, None
 
-        pick = self.normalize_object(payload.get("pick", payload.get("pick_target", "")))
-        place = self.normalize_object(payload.get("place", payload.get("place_target", "")))
-        if not pick or pick not in self.allowed_objects:
-            return False, f"invalid pick target: {payload.get('pick', payload.get('pick_target', ''))}", None, None
-        if not place or place not in self.allowed_objects:
-            return False, f"invalid place target: {payload.get('place', payload.get('place_target', ''))}", None, None
+        pick_raw = payload.get("pick", payload.get("pick_target", ""))
+        place_raw = payload.get("place", payload.get("place_target", ""))
+        pick = self.normalize_visual_query(pick_raw)
+        place = self.normalize_visual_query(place_raw)
+        if not pick:
+            return False, f"invalid pick query: {pick_raw}", None, None
+        if not place:
+            return False, f"invalid place query: {place_raw}", None, None
         if pick == place:
             return False, "pick and place targets are the same", None, None
         return True, "ok", pick, place
+
+    def normalize_visual_query(self, value: Any) -> str:
+        query = re.sub(r"\s+", " ", str(value).strip().lower())
+        if not query or len(query) > self.max_query_length:
+            return ""
+        if not re.fullmatch(r"[a-z0-9][a-z0-9 ._'\-]*", query):
+            return ""
+        return query if re.search(r"[a-z]", query) else ""
 
     def normalize_object(self, value: Any) -> str:
         raw = str(value).strip().lower()
