@@ -2,7 +2,7 @@ from math import atan2, hypot
 
 from pytest import approx
 
-from ee_switch_debug.navigation_geometry import (
+from sm_task_orchestrator.navigation_geometry import (
     compute_standoff_pose,
     hybrid_blend_weight,
     rear_sector_clearance,

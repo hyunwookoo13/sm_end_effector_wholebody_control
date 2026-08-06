@@ -1,23 +1,18 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>ee_switch_debug</name>
+  <name>sm_task_orchestrator</name>
   <version>0.0.0</version>
-  <description>Debug node for reading target frames relative to the mobile base.</description>
+  <description>Pick-and-place task orchestration and navigation handoff.</description>
   <maintainer email="gunmin0525@gmail.com">kiro</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
+  <exec_depend>action_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>launch</exec_depend>
-  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>sm_florence_2_vlm_ros2</exec_depend>
-  <exec_depend>sm_grasping_ros2</exec_depend>
-  <exec_depend>sm_natural_language_task</exec_depend>
-  <exec_depend>sm_navigation_nav2</exec_depend>
-  <exec_depend>sm_base_control_manager</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 

@@ -4,7 +4,7 @@ from geometry_msgs.msg import PoseStamped
 from pytest import approx
 from std_msgs.msg import String
 
-from ee_switch_debug.pick_place_task_manager import PickPlaceTaskManager
+from sm_task_orchestrator.pick_place_task_manager import PickPlaceTaskManager
 
 
 def make_manager_without_ros_node():

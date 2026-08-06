@@ -1,4 +1,4 @@
-from ee_switch_debug.pick_place_task_manager import class_aliases_for as task_aliases_for
+from sm_task_orchestrator.pick_place_task_manager import class_aliases_for as task_aliases_for
 from sm_florence_2_vlm.florence_2_vlm_node import (
     Florence2Detector,
     class_aliases_for as florence_aliases_for,

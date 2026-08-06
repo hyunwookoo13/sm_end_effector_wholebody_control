@@ -1,6 +1,6 @@
 from geometry_msgs.msg import TransformStamped
 
-from ee_switch_debug.pick_place_task_manager import (
+from sm_task_orchestrator.pick_place_task_manager import (
     PickPlaceTaskManager,
     departure_retreat_for_new_task,
 )
