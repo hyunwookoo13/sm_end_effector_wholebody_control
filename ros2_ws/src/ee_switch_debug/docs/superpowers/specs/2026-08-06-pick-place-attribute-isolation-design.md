@@ -80,10 +80,10 @@ only to Ollama-produced natural-language results.
 
 ## Performance
 
-Each warm Gemma 3 4B request takes approximately 0.8 seconds on the current RTX
-3090 Ti. The three sequential requests therefore add approximately 2.3-3.0
-seconds once, before navigation starts. The model remains fully GPU-resident,
-and no model request runs during Nav2, precision control, or arm motion.
+Live acceptance on the current RTX 3090 Ti measured the complete three-request
+sequence at approximately 1.55-1.60 seconds per command. This delay occurs once,
+before navigation starts. The model remains fully GPU-resident, and no model
+request runs during Nav2, precision control, or arm motion.
 
 ## Verification
 

@@ -180,6 +180,13 @@ becomes:
 {"pick": "orange", "place": "pink box"}
 ```
 
+The parser first separates the original pick and place phrases, then translates
+each phrase in an isolated model request. A destination attribute is not copied
+to an unqualified pick object: `사과를 노란색 박스에 넣어줘` becomes
+`{"pick": "apple", "place": "yellow box"}`. The three warm model requests took
+about 1.55-1.60 seconds in live tests, before any navigation or manipulation
+starts.
+
 Language output does not start motion by itself. The task manager keeps the base
 stopped in `FIND_PICK` until YOLOE and grasping publish fresh current-task data.
 An Ollama timeout, ambiguous command, missing detection, or missing grasp does
