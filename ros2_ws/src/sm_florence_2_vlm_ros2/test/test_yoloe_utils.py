@@ -26,6 +26,10 @@ def test_expand_yoloe_prompts_keeps_plain_aliases_for_uncolored_targets():
     assert prompts[:3] == ["box", "tray", "plastic tray"]
 
 
+def test_expand_yoloe_prompts_preserves_an_unseen_class_query():
+    assert expand_yoloe_prompts(["banana"])[0] == "banana"
+
+
 def test_expand_yoloe_prompts_adds_visual_confuser_for_single_fruit_target():
     assert expand_yoloe_prompts(["apple"]) == ["apple", "orange"]
     assert expand_yoloe_prompts(["orange"]) == ["orange", "apple"]

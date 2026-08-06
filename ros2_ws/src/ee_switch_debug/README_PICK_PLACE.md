@@ -165,6 +165,34 @@ Color-qualified targets are supported through YOLOE plus mask color validation:
 blue can | red can | yellow box | pink box | green cup
 ```
 
+The default natural-language path is open vocabulary. Local Ollama runs
+`gemma3:1b` once per command and converts Korean or English input into concise
+English visual queries. The queries are not checked against a fixed object-name
+list, so a new object name does not require a parser alias. For example:
+
+```text
+오렌지를 분홍색 박스에 넣어줘
+```
+
+becomes:
+
+```json
+{"pick": "orange", "place": "pink box"}
+```
+
+Language output does not start motion by itself. The task manager keeps the base
+stopped in `FIND_PICK` until YOLOE and grasping publish fresh current-task data.
+An Ollama timeout, ambiguous command, missing detection, or missing grasp does
+not fall back to a different object.
+
+The old alias parser is available only as an explicit compatibility mode:
+
+```bash
+ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py \
+  use_local_llm:=false \
+  use_rule_task_parser:=true
+```
+
 Color-qualified targets are resolved as semantic class plus ROI color. For example,
 `파란 캔을 노란 박스에 넣어줘` becomes `pick=blue can` and `place=yellow box`;
 YOLOE proposes text-prompted masks, but the final bbox/ROI is kept only when the

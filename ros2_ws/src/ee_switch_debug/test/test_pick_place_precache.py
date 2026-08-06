@@ -102,6 +102,31 @@ def test_perception_payload_detects_pick_and_place_but_limits_roi_to_pick():
     }
 
 
+def test_open_vocabulary_queries_reach_perception_without_rewriting():
+    payload = PickPlaceTaskManager.build_perception_payload("orange", "pink box")
+
+    assert json.loads(payload) == {
+        "target_objects": ["orange", "pink box"],
+        "roi_target_objects": ["orange"],
+    }
+
+
+def test_find_pick_does_not_navigate_without_fresh_grounding():
+    manager = PickPlaceTaskManager.__new__(PickPlaceTaskManager)
+    manager.phase = "FIND_PICK"
+    manager.pick_object = "orange"
+    manager.pick_transform = None
+    manager.last_debug = ""
+    manager.request_navigation = lambda *args: (_ for _ in ()).throw(
+        AssertionError("navigation requested before grounding")
+    )
+
+    manager.advance_phase()
+
+    assert manager.phase == "FIND_PICK"
+    assert manager.last_debug == "waiting for pick grasp: orange"
+
+
 def test_fresh_grasp_gate_rejects_early_and_old_stamped_grasps():
     manager = PickPlaceTaskManager.__new__(PickPlaceTaskManager)
     manager.task_start_ns = 10_000
