@@ -1,7 +1,8 @@
 # Modular Packaging Phase 1 Runtime Contract
 
-This document records the verified runtime baseline before the Phase 1 package
-layout changes. Tasks 2-5 use it as the compatibility checklist.
+This document records both the verified runtime baseline before the Phase 1
+package layout changes and the resolved Phase 1 ownership state. Tasks 2-5 use
+the baseline as the compatibility checklist.
 
 ## Baseline verification
 
@@ -61,8 +62,9 @@ Sim nor its stage was started or modified for this verification.
 When a baseline-equivalent Isaac Sim ROS-bridge stage is active, run:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)/ros2_ws"
 source /opt/ros/humble/setup.bash
-source /home/kiro/Desktop/hw_ws/.worktrees/modular-packaging-phase1/ros2_ws/install_modular_phase1/setup.bash
+source install_modular_phase1/setup.bash
 ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py autostart:=false enable_nav2:=true
 ```
 
@@ -76,6 +78,11 @@ remote task performs the existing safe-retreat behavior. Apple behavior is
 recorded but is not an improvement target for this packaging phase.
 
 ## Launch argument contract
+
+### Pre-Phase-1 baseline defaults
+
+The following table intentionally preserves the defaults captured before the
+package move.
 
 | Argument | Default |
 |---|---|
@@ -131,6 +138,20 @@ The following defaults are explicitly protected: `enable_nav2=false`,
 `local_llm_model=gemma3:4b`, `use_local_llm=true`, and
 `use_rule_task_parser=false`.
 
+### Phase 1-resolved resource default
+
+Phase 1 keeps every launch-argument value and runtime effect unchanged except
+for the resource owner used to resolve `nav2_params_file`:
+
+| State | Resolved `nav2_params_file` default |
+|---|---|
+| Pre-Phase-1 baseline | `FindPackageShare("ee_switch_debug")/config/nav2_rolling_odom.yaml` |
+| Phase 1 final | `FindPackageShare("sm_navigation_nav2")/config/nav2_rolling_odom.yaml` |
+
+This resource-path delta is intentional because the unchanged YAML moved to
+its new owner. It does not change the file contents, parameter values, launch
+argument name, or runtime behavior.
+
 ## Runtime node and topic contract
 
 | Capability | Node name | Executable owner | Output/interface |
@@ -141,7 +162,9 @@ The following defaults are explicitly protected: `enable_nav2=false`,
 | Task orchestration | `pick_place_task_manager` | `ee_switch_debug` | `/base_control_mode`, `/base_control_blend` |
 | Manipulation | `arm_yaw_rho_z_position_controller` | `ee_switch_debug` | `/joint_position_command`, `/cmd_vel_manipulation` |
 
-**Phase 1 may change only the `Executable owner` column.** Node names,
-topics, action interfaces, defaults, QoS behavior, controller values, and the
-existing perception and grasping package names are runtime compatibility
-requirements.
+Within the runtime node/topic table, Phase 1 may change only the `Executable
+owner` column. Separately, the `nav2_params_file` default resolves the same
+unchanged YAML through `sm_navigation_nav2`, as documented above. Node names,
+topics, action interfaces, parameter defaults, QoS behavior, controller
+values, and the existing perception and grasping package names remain runtime
+compatibility requirements.

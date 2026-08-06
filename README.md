@@ -6,17 +6,23 @@ mobile-manipulator whole-body position control in Isaac Sim.
 ## Packages
 
 - `ee_switch_debug`: mobile-base/arm switching, grasp target TF bridging, and
-  arm position control.
+  arm position control, plus the compatibility full-system launch.
+- `sm_base_control_manager`: base-command arbitration and final `/cmd_vel`
+  publication.
 - `sm_florence_2_vlm_ros2`: Florence-2 RGB-D object detection and ROI point
   cloud generation.
 - `sm_grasping_ros2`: grasp candidate generation, best-pose selection, and
   RViz gripper markers.
+- `sm_natural_language_task`: natural-language task parsing and interactive
+  task input.
+- `sm_navigation_nav2`: Nav2 launch and configuration ownership.
 
 ## Build
 
 ```bash
 cd ros2_ws
-colcon build --symlink-install
+source /opt/ros/humble/setup.bash
+colcon build --executor sequential --packages-up-to ee_switch_debug
 source install/setup.bash
 ```
 
@@ -24,12 +30,13 @@ Model files and Python virtual environments are not tracked.
 
 ## Pick And Place
 
-Build the package after changing launch/config/Python files:
+Build the compatibility launch and all of its package dependencies after
+changing launch/config/Python files:
 
 ```bash
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --packages-select ee_switch_debug
+colcon build --executor sequential --packages-up-to ee_switch_debug
 source install/setup.bash
 ```
 

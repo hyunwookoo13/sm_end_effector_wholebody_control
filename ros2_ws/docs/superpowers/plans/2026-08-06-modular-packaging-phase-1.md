@@ -646,7 +646,7 @@ git commit -m "refactor: extract base control manager package"
 
 **Interfaces:**
 - Consumes: packages produced by Tasks 2-4.
-- Produces: a buildable five-package runtime graph with unchanged public behavior and recorded verification evidence.
+- Produces: a buildable six-package runtime graph with unchanged public behavior and recorded verification evidence.
 
 - [ ] **Step 1: Run stale-reference checks**
 

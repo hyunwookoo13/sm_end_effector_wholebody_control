@@ -1,4 +1,5 @@
 from pathlib import Path
+from xml.etree import ElementTree
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -19,3 +20,17 @@ def test_nav2_launch_owns_required_servers_and_remap():
 
 def test_nav2_config_is_installed_from_this_package():
     assert (PACKAGE_ROOT / "config" / "nav2_rolling_odom.yaml").is_file()
+
+
+def test_manifest_declares_yaml_selected_nav2_plugins():
+    package = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()
+    exec_dependencies = {
+        dependency.text for dependency in package.findall("exec_depend")
+    }
+    required_plugins = {
+        "nav2_behavior_tree",
+        "nav2_costmap_2d",
+        "nav2_dwb_controller",
+    }
+
+    assert required_plugins <= exec_dependencies

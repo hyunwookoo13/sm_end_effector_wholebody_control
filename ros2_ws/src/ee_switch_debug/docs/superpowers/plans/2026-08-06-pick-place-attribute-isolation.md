@@ -1,5 +1,12 @@
 # Pick/Place Attribute Isolation Implementation Plan
 
+> **Archived pre-Phase-1 plan — do not execute as written.** Phase 1 moved the
+> parser to `ros2_ws/src/sm_natural_language_task/sm_natural_language_task/natural_language_task_parser.py`
+> and its focused tests to `ros2_ws/src/sm_natural_language_task/test/`.
+> Paths and `ee_switch_debug` test commands below are retained only
+> as historical implementation evidence; use the current package paths for any
+> follow-up work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent destination attributes from leaking into an unqualified pick query while preserving open-vocabulary natural-language input.
