@@ -1,3 +1,7 @@
+import json
+
+from std_msgs.msg import String
+
 from ee_switch_debug.natural_language_task_parser import NaturalLanguageTaskParser
 
 
@@ -6,6 +10,34 @@ def make_parser_without_ros_node():
     parser.max_query_length = 80
     parser.alias_map = {}
     parser.allowed_objects = {"apple", "yellow box"}
+    return parser
+
+
+class RecordingPublisher:
+    def __init__(self):
+        self.messages = []
+
+    def publish(self, message):
+        self.messages.append(message)
+
+
+class RecordingLogger:
+    def __init__(self):
+        self.warnings = []
+
+    def warn(self, message):
+        self.warnings.append(str(message))
+
+
+def make_message_parser():
+    parser = make_parser_without_ros_node()
+    parser.use_ollama = True
+    parser.use_rule_fallback = True
+    parser.dry_run = False
+    parser.task_pub = RecordingPublisher()
+    parser.status_pub = RecordingPublisher()
+    parser._recording_logger = RecordingLogger()
+    parser.get_logger = lambda: parser._recording_logger
     return parser
 
 
@@ -47,3 +79,119 @@ def test_validate_result_rejects_equal_queries():
     )
 
     assert result == (False, "pick and place targets are the same", None, None)
+
+
+def test_natural_language_uses_ollama_before_rules():
+    parser = make_message_parser()
+    parser.parse_with_ollama = lambda text: {
+        "pick": "orange",
+        "place": "pink box",
+        "needs_clarification": False,
+    }
+    parser.parse_with_rules = lambda text: (_ for _ in ()).throw(
+        AssertionError("rules called before Ollama")
+    )
+
+    parser.on_natural_language_task(String(data="오렌지를 분홍색 박스에 넣어줘"))
+
+    assert json.loads(parser.task_pub.messages[-1].data) == {
+        "pick": "orange",
+        "place": "pink box",
+    }
+    assert json.loads(parser.status_pub.messages[-1].data)["source"] == "ollama"
+
+
+def test_ollama_timeout_publishes_no_task_and_no_rule_fallback():
+    parser = make_message_parser()
+    parser.use_rule_fallback = False
+    parser.parse_with_ollama = lambda text: (_ for _ in ()).throw(TimeoutError("timeout"))
+
+    parser.on_natural_language_task(String(data="오렌지를 분홍색 박스에 넣어줘"))
+
+    assert parser.task_pub.messages == []
+    status = json.loads(parser.status_pub.messages[-1].data)
+    assert status["ok"] is False
+    assert status["source"] == "ollama"
+    assert status["reason"].startswith("nlp_unavailable")
+
+
+def test_model_clarification_does_not_fall_back_to_rules():
+    parser = make_message_parser()
+    parser.parse_with_ollama = lambda text: {
+        "pick": "",
+        "place": "",
+        "needs_clarification": True,
+        "reason": "unresolved pronoun",
+    }
+    parser.parse_with_rules = lambda text: (_ for _ in ()).throw(
+        AssertionError("rules called after clarification")
+    )
+
+    parser.on_natural_language_task(String(data="그걸 저기에 놓아줘"))
+
+    assert parser.task_pub.messages == []
+    status = json.loads(parser.status_pub.messages[-1].data)
+    assert status["reason"] == "unresolved pronoun"
+
+
+def test_direct_json_bypasses_ollama():
+    parser = make_message_parser()
+    parser.parse_with_ollama = lambda text: (_ for _ in ()).throw(
+        AssertionError("Ollama called for direct JSON")
+    )
+
+    parser.on_natural_language_task(
+        String(data='{"pick":"orange","place":"pink box"}')
+    )
+
+    assert json.loads(parser.task_pub.messages[-1].data) == {
+        "pick": "orange",
+        "place": "pink box",
+    }
+    assert json.loads(parser.status_pub.messages[-1].data)["source"] == "direct_json"
+
+
+def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
+    parser = make_parser_without_ros_node()
+    parser.ollama_url = "http://127.0.0.1:11434/api/chat"
+    parser.model = "gemma3:1b"
+    parser.request_timeout_sec = 5.0
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "pick": "orange",
+                                "place": "pink box",
+                                "needs_clarification": False,
+                                "reason": "",
+                            }
+                        )
+                    }
+                }
+            ).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    result = parser.parse_with_ollama("오렌지를 분홍색 박스에 넣어줘")
+
+    assert result["pick"] == "orange"
+    assert captured["body"]["keep_alive"] == "30m"
+    system_prompt = captured["body"]["messages"][0]["content"]
+    assert "Allowed objects" not in system_prompt
+    assert "visual noun phrase" in system_prompt

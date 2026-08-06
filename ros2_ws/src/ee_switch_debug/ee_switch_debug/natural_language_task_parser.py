@@ -119,27 +119,9 @@ class NaturalLanguageTaskParser(Node):
         self.declare_parameter("model", "gemma3:1b")
         self.declare_parameter("request_timeout_sec", 5.0)
         self.declare_parameter("max_query_length", 80)
-        self.declare_parameter(
-            "allowed_objects",
-            [
-                "can",
-                "blue can",
-                "red can",
-                "box",
-                "blue box",
-                "red box",
-                "yellow box",
-                "pink box",
-                "dish",
-                "apple",
-                "bottle",
-                "mug",
-                "green cup",
-            ],
-        )
         self.declare_parameter("alias_map_json", "{}")
         self.declare_parameter("use_ollama", True)
-        self.declare_parameter("use_rule_fallback", True)
+        self.declare_parameter("use_rule_fallback", False)
         self.declare_parameter("dry_run", False)
 
         self.natural_language_topic = str(self.get_parameter("natural_language_topic").value)
@@ -149,11 +131,6 @@ class NaturalLanguageTaskParser(Node):
         self.model = str(self.get_parameter("model").value)
         self.request_timeout_sec = float(self.get_parameter("request_timeout_sec").value)
         self.max_query_length = int(self.get_parameter("max_query_length").value)
-        self.allowed_objects = {
-            str(name).strip().lower()
-            for name in self.get_parameter("allowed_objects").value
-            if str(name).strip()
-        }
         self.alias_map = self._load_aliases(str(self.get_parameter("alias_map_json").value))
         self.use_ollama = bool(self.get_parameter("use_ollama").value)
         self.use_rule_fallback = bool(self.get_parameter("use_rule_fallback").value)
@@ -166,7 +143,7 @@ class NaturalLanguageTaskParser(Node):
         self.get_logger().info(
             "Natural language task parser: "
             f"{self.natural_language_topic} -> {self.task_topic}, "
-            f"model={self.model}, allowed={sorted(self.allowed_objects)}"
+            f"model={self.model}, open_vocabulary=true, rule_compat={self.use_rule_fallback}"
         )
 
     def _load_aliases(self, alias_map_json: str) -> dict[str, str]:
@@ -194,33 +171,24 @@ class NaturalLanguageTaskParser(Node):
         parsed: dict[str, Any] | None = self.parse_direct_json(text)
         source = "direct_json" if parsed is not None else ""
 
-        if parsed is None and self.use_rule_fallback:
-            rule_parsed = self.parse_with_rules(text)
-            rule_valid, _, _, _ = self.validate_result(rule_parsed)
-            if rule_valid:
-                parsed = rule_parsed
-                source = "rules"
-
         if parsed is None and self.use_ollama:
+            source = "ollama"
             try:
                 parsed = self.parse_with_ollama(text)
-                source = "ollama"
             except Exception as exc:
                 self.get_logger().warn(f"Ollama parse failed: {exc}")
+                self.publish_status(
+                    False,
+                    f"nlp_unavailable: {exc}",
+                    source=source,
+                    text=text,
+                )
+                return
+        elif parsed is None and self.use_rule_fallback:
+            parsed = self.parse_with_rules(text)
+            source = "rules"
 
         valid, reason, pick, place = self.validate_result(parsed)
-        if not valid and self.use_rule_fallback and source != "rules":
-            fallback = self.parse_with_rules(text)
-            fallback_valid, fallback_reason, fallback_pick, fallback_place = self.validate_result(fallback)
-            if fallback_valid:
-                parsed = fallback
-                source = f"{source}+rules" if source else "rules"
-                valid = fallback_valid
-                reason = fallback_reason
-                pick = fallback_pick
-                place = fallback_place
-            elif parsed is None:
-                reason = fallback_reason
         if not valid:
             self.publish_status(False, reason, source=source, text=text)
             self.get_logger().warn(f"Natural language task rejected: {reason}; text={text!r}")
@@ -244,17 +212,21 @@ class NaturalLanguageTaskParser(Node):
 
     def parse_with_ollama(self, text: str) -> dict[str, Any] | None:
         system_prompt = (
-            "You convert Korean or English robot commands into JSON. "
-            "Return only JSON. "
-            f"Allowed objects: {', '.join(sorted(self.allowed_objects))}. "
-            "Use canonical English object names from the allowed list. "
-            "If the command is ambiguous, set needs_clarification true. "
-            "Schema: {\"pick\":\"can\",\"place\":\"box\",\"needs_clarification\":false}"
+            "Convert one Korean or English pick-and-place command into JSON. "
+            "Return only JSON and do not restrict objects to a predefined catalog. "
+            "Write pick and place as concise lowercase English visual noun phrases. "
+            "Preserve visual attributes such as color, material, and object class, "
+            "but remove command verbs and Korean particles. "
+            "Set needs_clarification true when either target is missing, a pronoun is "
+            "unresolved, the request is not pick-and-place, or it contains multiple tasks. "
+            "Schema: {\"pick\":\"orange\",\"place\":\"pink box\","
+            "\"needs_clarification\":false,\"reason\":\"\"}"
         )
         request_body = {
             "model": self.model,
             "stream": False,
             "format": "json",
+            "keep_alive": "30m",
             "options": {
                 "temperature": 0.0,
                 "num_predict": 128,
@@ -330,8 +302,6 @@ class NaturalLanguageTaskParser(Node):
         matches: list[tuple[int, int, str]] = []
         aliases = sorted(self.alias_map.items(), key=lambda item: len(item[0]), reverse=True)
         for alias, canonical in aliases:
-            if canonical not in self.allowed_objects:
-                continue
             for match in re.finditer(re.escape(alias), text):
                 matches.append((match.start(), match.end(), canonical))
 
@@ -354,8 +324,6 @@ class NaturalLanguageTaskParser(Node):
             return None
         aliases = sorted(self.alias_map.items(), key=lambda item: len(item[0]), reverse=True)
         for alias, canonical in aliases:
-            if canonical not in self.allowed_objects:
-                continue
             pattern = re.escape(alias) + r"\s*(안에|속에|위에|에|으로|로)"
             if re.search(pattern, text):
                 return canonical
