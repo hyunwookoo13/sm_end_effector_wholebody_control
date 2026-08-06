@@ -1,6 +1,7 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
@@ -201,58 +202,20 @@ def generate_launch_description():
         ],
     )
 
-    nav2_controller = Node(
-        package="nav2_controller",
-        executable="controller_server",
-        name="controller_server",
-        output="screen",
+    nav2_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [
+                    FindPackageShare("sm_navigation_nav2"),
+                    "launch",
+                    "nav2_navigation.launch.py",
+                ]
+            )
+        ),
         condition=nav2_condition,
-        parameters=[LaunchConfiguration("nav2_params_file")],
-        remappings=[("cmd_vel", "/cmd_vel_navigation")],
-    )
-    nav2_planner = Node(
-        package="nav2_planner",
-        executable="planner_server",
-        name="planner_server",
-        output="screen",
-        condition=nav2_condition,
-        parameters=[LaunchConfiguration("nav2_params_file")],
-    )
-    nav2_behaviors = Node(
-        package="nav2_behaviors",
-        executable="behavior_server",
-        name="behavior_server",
-        output="screen",
-        condition=nav2_condition,
-        parameters=[LaunchConfiguration("nav2_params_file")],
-        remappings=[("cmd_vel", "/cmd_vel_navigation")],
-    )
-    nav2_bt_navigator = Node(
-        package="nav2_bt_navigator",
-        executable="bt_navigator",
-        name="bt_navigator",
-        output="screen",
-        condition=nav2_condition,
-        parameters=[LaunchConfiguration("nav2_params_file")],
-    )
-    nav2_lifecycle_manager = Node(
-        package="nav2_lifecycle_manager",
-        executable="lifecycle_manager",
-        name="lifecycle_manager_navigation",
-        output="screen",
-        condition=nav2_condition,
-        parameters=[
-            {
-                "use_sim_time": True,
-                "autostart": True,
-                "node_names": [
-                    "controller_server",
-                    "planner_server",
-                    "behavior_server",
-                    "bt_navigator",
-                ],
-            }
-        ],
+        launch_arguments={
+            "nav2_params_file": LaunchConfiguration("nav2_params_file"),
+        }.items(),
     )
 
     natural_language_task_parser = Node(
@@ -380,7 +343,11 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "nav2_params_file",
                 default_value=PathJoinSubstitution(
-                    [FindPackageShare("ee_switch_debug"), "config", "nav2_rolling_odom.yaml"]
+                    [
+                        FindPackageShare("sm_navigation_nav2"),
+                        "config",
+                        "nav2_rolling_odom.yaml",
+                    ]
                 ),
             ),
             DeclareLaunchArgument("pick_object", default_value="can"),
@@ -439,11 +406,7 @@ def generate_launch_description():
             place_grasping_inference_node,
             task_manager,
             navigation_cmd_mux,
-            nav2_controller,
-            nav2_planner,
-            nav2_behaviors,
-            nav2_bt_navigator,
-            nav2_lifecycle_manager,
+            nav2_launch,
             natural_language_task_parser,
             controller,
         ]
