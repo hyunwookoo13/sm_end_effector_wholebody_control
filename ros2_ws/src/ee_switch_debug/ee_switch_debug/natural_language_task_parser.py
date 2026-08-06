@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 import urllib.error
 import urllib.request
 from typing import Any
@@ -118,6 +119,8 @@ class NaturalLanguageTaskParser(Node):
         self.declare_parameter("ollama_url", "http://127.0.0.1:11434/api/chat")
         self.declare_parameter("model", "gemma3:1b")
         self.declare_parameter("request_timeout_sec", 5.0)
+        self.declare_parameter("model_warmup_timeout_sec", 30.0)
+        self.declare_parameter("warm_model_on_startup", True)
         self.declare_parameter("max_query_length", 80)
         self.declare_parameter("alias_map_json", "{}")
         self.declare_parameter("use_ollama", True)
@@ -130,6 +133,12 @@ class NaturalLanguageTaskParser(Node):
         self.ollama_url = str(self.get_parameter("ollama_url").value)
         self.model = str(self.get_parameter("model").value)
         self.request_timeout_sec = float(self.get_parameter("request_timeout_sec").value)
+        self.model_warmup_timeout_sec = float(
+            self.get_parameter("model_warmup_timeout_sec").value
+        )
+        self.warm_model_on_startup = bool(
+            self.get_parameter("warm_model_on_startup").value
+        )
         self.max_query_length = int(self.get_parameter("max_query_length").value)
         self.alias_map = self._load_aliases(str(self.get_parameter("alias_map_json").value))
         self.use_ollama = bool(self.get_parameter("use_ollama").value)
@@ -139,6 +148,13 @@ class NaturalLanguageTaskParser(Node):
         self.task_pub = self.create_publisher(String, self.task_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
         self.create_subscription(String, self.natural_language_topic, self.on_natural_language_task, 10)
+
+        self.model_warmup_done = threading.Event()
+        self.model_warmup_error = ""
+        if self.use_ollama and self.warm_model_on_startup:
+            threading.Thread(target=self.warm_ollama_model, daemon=True).start()
+        else:
+            self.model_warmup_done.set()
 
         self.get_logger().info(
             "Natural language task parser: "
@@ -211,6 +227,10 @@ class NaturalLanguageTaskParser(Node):
         return payload if isinstance(payload, dict) else None
 
     def parse_with_ollama(self, text: str) -> dict[str, Any] | None:
+        warmup_done = getattr(self, "model_warmup_done", None)
+        if warmup_done is not None and not warmup_done.wait(self.model_warmup_timeout_sec):
+            raise TimeoutError("model warmup did not finish")
+
         system_prompt = (
             "Convert one Korean or English pick-and-place command into JSON. "
             "Return only JSON and do not restrict objects to a predefined catalog. "
@@ -229,7 +249,8 @@ class NaturalLanguageTaskParser(Node):
             "keep_alive": "30m",
             "options": {
                 "temperature": 0.0,
-                "num_predict": 128,
+                "num_predict": 64,
+                "num_ctx": 2048,
             },
             "messages": [
                 {"role": "system", "content": system_prompt},
@@ -257,6 +278,34 @@ class NaturalLanguageTaskParser(Node):
             else:
                 content = str(payload.get("response", ""))
         return self.extract_json_object(content)
+
+    def warm_ollama_model(self) -> None:
+        generate_url = self.ollama_url.rsplit("/", 1)[0] + "/generate"
+        request_body = {
+            "model": self.model,
+            "prompt": "",
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {"num_ctx": 2048},
+        }
+        request = urllib.request.Request(
+            generate_url,
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.model_warmup_timeout_sec,
+            ) as response:
+                response.read()
+            self.get_logger().info(f"Ollama model warmed: {self.model}")
+        except Exception as exc:
+            self.model_warmup_error = str(exc)
+            self.get_logger().warn(f"Ollama model warmup failed: {exc}")
+        finally:
+            self.model_warmup_done.set()
 
     def extract_json_object(self, text: str) -> dict[str, Any] | None:
         raw = text.strip()

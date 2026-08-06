@@ -1,4 +1,5 @@
 import json
+import threading
 
 from std_msgs.msg import String
 
@@ -23,7 +24,11 @@ class RecordingPublisher:
 
 class RecordingLogger:
     def __init__(self):
+        self.infos = []
         self.warnings = []
+
+    def info(self, message):
+        self.infos.append(str(message))
 
     def warn(self, message):
         self.warnings.append(str(message))
@@ -192,6 +197,51 @@ def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
 
     assert result["pick"] == "orange"
     assert captured["body"]["keep_alive"] == "30m"
+    assert captured["body"]["options"]["num_ctx"] == 2048
+    assert captured["body"]["options"]["num_predict"] == 64
     system_prompt = captured["body"]["messages"][0]["content"]
     assert "Allowed objects" not in system_prompt
     assert "visual noun phrase" in system_prompt
+
+
+def test_warm_ollama_model_loads_without_generating_text(monkeypatch):
+    parser = make_parser_without_ros_node()
+    parser.ollama_url = "http://127.0.0.1:11434/api/chat"
+    parser.model = "gemma3:1b"
+    parser.model_warmup_timeout_sec = 30.0
+    parser.model_warmup_done = threading.Event()
+    parser.model_warmup_error = ""
+    parser._recording_logger = RecordingLogger()
+    parser.get_logger = lambda: parser._recording_logger
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            return b'{"done":true,"response":""}'
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    parser.warm_ollama_model()
+
+    assert captured["url"] == "http://127.0.0.1:11434/api/generate"
+    assert captured["body"] == {
+        "model": "gemma3:1b",
+        "prompt": "",
+        "stream": False,
+        "keep_alive": "30m",
+        "options": {"num_ctx": 2048},
+    }
+    assert parser.model_warmup_done.is_set()
+    assert parser.model_warmup_error == ""
