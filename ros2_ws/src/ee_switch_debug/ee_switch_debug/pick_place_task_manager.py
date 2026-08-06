@@ -32,6 +32,13 @@ CLASS_ALIASES = {
 }
 
 
+def departure_retreat_for_new_task(
+    previous_phase: str,
+    enable_navigation: bool,
+) -> bool:
+    return bool(enable_navigation and str(previous_phase).strip().upper() == "DONE")
+
+
 def split_semantic_target(name: str) -> tuple[str | None, str]:
     tokens = str(name).strip().lower().split()
     if tokens and tokens[0] in COLOR_WORDS:
@@ -46,7 +53,9 @@ def class_aliases_for(name: str) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
-def normalize_quaternion_xyzw(q: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+def normalize_quaternion_xyzw(
+    q: tuple[float, float, float, float],
+) -> tuple[float, float, float, float]:
     x, y, z, w = q
     norm = (x * x + y * y + z * z + w * w) ** 0.5
     if norm <= 1e-9:
@@ -235,7 +244,10 @@ class PickPlaceTaskManager(Node):
         self.current_transform: TransformStamped | None = None
         self.pick_orientation: tuple[float, float, float, float] | None = None
         self.pick_orientation_frame = ""
-        self.pick_orientation_by_source: dict[str, tuple[str, tuple[float, float, float, float]]] = {}
+        self.pick_orientation_by_source: dict[
+            str,
+            tuple[str, tuple[float, float, float, float]],
+        ] = {}
         self.selected_pick_source = ""
         self.selected_place_source = ""
         self.task_start_ns = 0
@@ -248,6 +260,8 @@ class PickPlaceTaskManager(Node):
         self.hybrid_weight = 0.0
         self.retreat_phase_start_ns = 0
         self.retreat_start_xy: tuple[float, float] | None = None
+        self.retreat_next_phase = "FIND_PLACE"
+        self.departure_retreat_pending = False
         self.rear_clearance_m: float | None = None
         self.rear_scan_received_ns = 0
 
@@ -306,9 +320,13 @@ class PickPlaceTaskManager(Node):
         if self.autostart and self.pick_object and self.place_object:
             self.start_task(self.pick_object, self.place_object)
 
+        detection_topics = self._unique_topics(
+            [self.detections_topic, self.place_detections_topic]
+        )
         self.get_logger().info(
             f"Pick/place manager target={self.target_frame}, parent={self.parent_frame}, "
-            f"task_topic={self.task_topic}, detections={self._unique_topics([self.detections_topic, self.place_detections_topic])}, "
+            f"task_topic={self.task_topic}, "
+            f"detections={detection_topics}, "
             f"grasp_topics={self.grasp_topics}"
         )
 
@@ -316,9 +334,17 @@ class PickPlaceTaskManager(Node):
         values = [topic for topic in defaults if topic]
         parameter_value = self.get_parameter(parameter_name).value
         if isinstance(parameter_value, (list, tuple)):
-            values.extend(str(item).strip() for item in parameter_value if str(item).strip())
+            values.extend(
+                str(item).strip()
+                for item in parameter_value
+                if str(item).strip()
+            )
         elif parameter_value:
-            values.extend(token.strip() for token in str(parameter_value).split(",") if token.strip())
+            values.extend(
+                token.strip()
+                for token in str(parameter_value).split(",")
+                if token.strip()
+            )
         return self._unique_topics(values)
 
     @staticmethod
@@ -366,6 +392,7 @@ class PickPlaceTaskManager(Node):
         return tokens[0], tokens[1]
 
     def start_task(self, pick_object: str, place_object: str) -> None:
+        previous_phase = self.phase
         self.pick_object = pick_object
         self.place_object = place_object
         self.phase = "FIND_PICK"
@@ -390,6 +417,11 @@ class PickPlaceTaskManager(Node):
         self.hybrid_weight = 0.0
         self.retreat_phase_start_ns = 0
         self.retreat_start_xy = None
+        self.retreat_next_phase = "FIND_PLACE"
+        self.departure_retreat_pending = departure_retreat_for_new_task(
+            previous_phase,
+            self.enable_navigation,
+        )
         self.rear_clearance_m = None
         self.rear_scan_received_ns = 0
         self.publish_target_object(force=True)
@@ -400,7 +432,9 @@ class PickPlaceTaskManager(Node):
             self.publish_arm_command("PICK")
             self.publish_base_mode("MANIPULATION")
         self.publish_task_state()
-        self.get_logger().warn(f"Pick/place task started: pick={pick_object}, place={place_object}")
+        self.get_logger().warn(
+            f"Pick/place task started: pick={pick_object}, place={place_object}"
+        )
 
     def on_grasp_best(self, msg: PoseStamped, source_topic: str = "") -> None:
         if self.phase != "FIND_PICK":
@@ -623,7 +657,9 @@ class PickPlaceTaskManager(Node):
                     timeout=Duration(seconds=self.tf_timeout_sec),
                 )
             except TransformException as exc:
-                self.last_debug = f"waiting for transform {self.parent_frame} <- {source_frame}: {exc}"
+                self.last_debug = (
+                    f"waiting for transform {self.parent_frame} <- {source_frame}: {exc}"
+                )
                 return None
 
             rotation_msg = parent_from_source.transform.rotation
@@ -735,11 +771,15 @@ class PickPlaceTaskManager(Node):
             place_direct_approach_distance_m=self.place_direct_approach_distance_m,
         )
         if skip_navigation:
+            self.maybe_start_departure_retreat(kind, skip_navigation=True)
             self.last_debug = f"skipping Nav2 {kind}: {skip_reason}"
             return "not_needed"
         if not self.navigation_client.server_is_ready():
             self.last_debug = f"waiting for Nav2 action server: {self.navigation_action_name}"
             return "waiting"
+        if self.maybe_start_departure_retreat(kind, skip_navigation=False):
+            self.last_debug = "safe departure retreat before Nav2 pick"
+            return "retreating"
 
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = self.parent_frame
@@ -763,6 +803,22 @@ class PickPlaceTaskManager(Node):
             f"yaw={planar_goal.yaw:.3f})"
         )
         return "started"
+
+    def maybe_start_departure_retreat(
+        self,
+        kind: str,
+        skip_navigation: bool,
+    ) -> bool:
+        if kind != "pick" or not self.departure_retreat_pending:
+            return False
+
+        self.departure_retreat_pending = False
+        if skip_navigation or self.retreat_distance_m <= 0.0:
+            return False
+
+        self.publish_arm_command("TRANSPORT")
+        self.start_safe_retreat(next_phase="FIND_PICK")
+        return True
 
     def place_direct_approach_status(self) -> tuple[bool, str]:
         """Return whether the cached place target is already reachable directly."""
@@ -898,7 +954,7 @@ class PickPlaceTaskManager(Node):
                 self.last_debug = f"waiting for pick grasp: {self.pick_object}"
                 return
             navigation = self.request_navigation("pick", self.pick_transform)
-            if navigation == "waiting":
+            if navigation in ("waiting", "retreating"):
                 return
             if navigation == "started":
                 self.phase = "NAVIGATE_PICK"
@@ -1010,10 +1066,11 @@ class PickPlaceTaskManager(Node):
         self.publish_arm_command("PLACE")
         self.phase = "PLACE"
 
-    def start_safe_retreat(self) -> None:
+    def start_safe_retreat(self, next_phase: str = "FIND_PLACE") -> None:
         self.phase = "SAFE_RETREAT"
         self.retreat_phase_start_ns = self.get_clock().now().nanoseconds
         self.retreat_start_xy = None
+        self.retreat_next_phase = str(next_phase)
         self.publish_retreat_command(0.0)
         self.publish_base_mode("STOP")
 
@@ -1035,8 +1092,15 @@ class PickPlaceTaskManager(Node):
             self.publish_base_mode("STOP")
             self.last_debug = "waiting for fresh rear scan before retreat"
             return
-        if self.rear_clearance_m is None or self.rear_clearance_m <= self.retreat_min_clearance_m:
-            clearance = "unknown" if self.rear_clearance_m is None else f"{self.rear_clearance_m:.2f}m"
+        if (
+            self.rear_clearance_m is None
+            or self.rear_clearance_m <= self.retreat_min_clearance_m
+        ):
+            clearance = (
+                "unknown"
+                if self.rear_clearance_m is None
+                else f"{self.rear_clearance_m:.2f}m"
+            )
             self.fail_safe_retreat(f"rear path blocked at {clearance}")
             return
 
@@ -1053,9 +1117,11 @@ class PickPlaceTaskManager(Node):
         if traveled >= self.retreat_distance_m:
             self.publish_retreat_command(0.0)
             self.publish_base_mode("STOP")
-            self.phase = "FIND_PLACE"
+            self.phase = self.retreat_next_phase
             self.last_debug = f"safe retreat complete: {traveled:.2f}m"
-            self.get_logger().warn("Task phase: SAFE_RETREAT -> FIND_PLACE")
+            self.get_logger().warn(
+                f"Task phase: SAFE_RETREAT -> {self.retreat_next_phase}"
+            )
             return
 
         self.publish_base_mode("RETREAT")
