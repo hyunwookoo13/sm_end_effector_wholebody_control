@@ -63,7 +63,7 @@ When a baseline-equivalent Isaac Sim ROS-bridge stage is active, run:
 ```bash
 source /opt/ros/humble/setup.bash
 source /home/kiro/Desktop/hw_ws/.worktrees/modular-packaging-phase1/ros2_ws/install_modular_phase1/setup.bash
-ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py enable_nav2:=true
+ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py autostart:=false enable_nav2:=true
 ```
 
 Capture the relevant ROS log lines while confirming: (1) a Korean
