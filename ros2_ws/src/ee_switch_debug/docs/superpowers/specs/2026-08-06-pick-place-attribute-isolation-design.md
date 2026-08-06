@@ -22,45 +22,45 @@ continue to work without adding aliases.
   control, base/arm switching, or manipulation controllers.
 - Do not add object, color, or material aliases as a correction layer.
 - Do not change the existing direct JSON task interface.
-- Do not add extra model calls or materially increase task-start latency.
+- Keep the added latency confined to task interpretation before motion starts.
 
 ## Selected Design
 
-Use one constrained Gemma request with explicit source ownership. The response
-schema adds `pick_source` and `place_source` alongside the existing English
-`pick`, `place`, `needs_clarification`, and `reason` fields.
+Use three isolated Gemma requests. The first request extracts only literal
+`pick_source` and `place_source` spans from the original command. After source
+validation, one request translates only the pick span and another request
+translates only the place span. A translation request never receives the other
+target, making cross-target attribute copying structurally impossible.
 
-The prompt requires the two source fields to be copied from the original user
-command before translation. It then instructs Gemma to translate each source
-phrase independently and forbids copying an attribute between targets. No
-concrete object example is embedded in the prompt, avoiding the example bias
-seen with the earlier `orange`/`pink box` schema example.
-
-Example internal response:
+Example extraction response:
 
 ```json
 {
   "pick_source": "사과",
   "place_source": "노란색 박스",
-  "pick": "apple",
-  "place": "yellow box",
   "needs_clarification": false,
   "reason": ""
 }
 ```
 
+The two isolated translation responses are `{"query":"apple"}` and
+`{"query":"yellow box"}`. No concrete object catalog or alias correction is
+used.
+
 ## Validation and Data Flow
 
 1. The console publishes the original command unchanged.
 2. The existing unresolved-reference input gate runs before Gemma.
-3. Gemma extracts two original-language source phrases and independently
-   translates them in one request.
+3. Gemma extracts only two original-language source phrases.
 4. The parser verifies that both non-empty source phrases occur in the original
    command and that their selected spans do not overlap.
-5. The existing English visual-query validation checks `pick` and `place`.
-6. Only a valid result is published through the unchanged `/pick_place_task`
+5. The parser sends `pick_source` alone to one translation request and
+   `place_source` alone to a second translation request.
+6. The existing English visual-query validation checks the two translated
+   queries.
+7. Only a valid result is published through the unchanged `/pick_place_task`
    JSON interface.
-7. YOLOE grounding and all subsequent navigation and manipulation behavior
+8. YOLOE grounding and all subsequent navigation and manipulation behavior
    continue unchanged.
 
 Korean case particles may remain at the edge of a source phrase as long as the
@@ -70,20 +70,20 @@ visual query by the model.
 ## Failure Behavior
 
 If either source phrase is missing, absent from the original command, overlaps
-the other source phrase, or the English output fails existing validation, the
-parser publishes a rejection status and publishes no task. It does not fall
-back to aliases, reuse a previous task, or start navigation.
+the other source phrase, a translation request fails, or the English output
+fails existing validation, the parser publishes a rejection status and
+publishes no task. It does not fall back to aliases, reuse a previous task, or
+start navigation.
 
 Direct JSON input remains compatible because source-span validation applies
 only to Ollama-produced natural-language results.
 
 ## Performance
 
-Live comparison on the current RTX 3090 Ti with Isaac Sim running measured the
-selected single-request format at approximately 1.0-1.1 seconds per command,
-compared with approximately 0.8 seconds for the previous schema. The model
-remains fully GPU-resident. Separate translation requests were rejected because
-they would add avoidable inference time and GPU work.
+Each warm Gemma 3 4B request takes approximately 0.8 seconds on the current RTX
+3090 Ti. The three sequential requests therefore add approximately 2.3-3.0
+seconds once, before navigation starts. The model remains fully GPU-resident,
+and no model request runs during Nav2, precision control, or arm motion.
 
 ## Verification
 
@@ -92,7 +92,8 @@ Automated tests will cover:
 - source phrases that are present and non-overlapping;
 - missing, invented, and overlapping source phrases;
 - unchanged direct JSON compatibility;
-- prompt and JSON schema requirements;
+- extraction and translation JSON schema requirements;
+- proof that each translator receives only one source phrase;
 - no task publication after source validation failure;
 - regression coverage for existing open-vocabulary and safety behavior.
 
