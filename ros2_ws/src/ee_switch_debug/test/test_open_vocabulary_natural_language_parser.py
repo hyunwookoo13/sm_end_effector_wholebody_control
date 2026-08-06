@@ -139,6 +139,8 @@ def test_default_model_has_enough_capacity_for_multilingual_grounding():
 def test_natural_language_uses_ollama_before_rules():
     parser = make_message_parser()
     parser.parse_with_ollama = lambda text: {
+        "pick_source": "오렌지",
+        "place_source": "분홍색 박스",
         "pick": "orange",
         "place": "pink box",
         "needs_clarification": False,
@@ -203,6 +205,24 @@ def test_unresolved_input_reference_is_rejected_before_ollama():
     assert status["reason"] == "unresolved reference in command"
 
 
+def test_ollama_result_with_invented_source_publishes_no_task():
+    parser = make_message_parser()
+    parser.parse_with_ollama = lambda text: {
+        "pick_source": "노란색 사과",
+        "place_source": "노란색 박스",
+        "pick": "yellow apple",
+        "place": "yellow box",
+        "needs_clarification": False,
+        "reason": "",
+    }
+
+    parser.on_natural_language_task(String(data="사과를 노란색 박스에 넣어줘"))
+
+    assert parser.task_pub.messages == []
+    status = json.loads(parser.status_pub.messages[-1].data)
+    assert status["reason"] == "pick source is not present in command"
+
+
 def test_direct_json_bypasses_ollama():
     parser = make_message_parser()
     parser.parse_with_ollama = lambda text: (_ for _ in ()).throw(
@@ -265,6 +285,8 @@ def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
     assert captured["body"]["options"]["num_predict"] == 64
     assert captured["body"]["format"]["type"] == "object"
     assert set(captured["body"]["format"]["required"]) == {
+        "pick_source",
+        "place_source",
         "pick",
         "place",
         "needs_clarification",
@@ -274,6 +296,8 @@ def test_ollama_prompt_is_open_vocabulary_and_keeps_model_loaded(monkeypatch):
     assert "Allowed objects" not in system_prompt
     assert "visual noun phrase" in system_prompt
     assert '"pick":"orange"' not in system_prompt
+    assert "exact character substrings" in system_prompt
+    assert "Never copy" in system_prompt
 
 
 def test_warm_ollama_model_loads_without_generating_text(monkeypatch):

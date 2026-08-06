@@ -242,6 +242,20 @@ class NaturalLanguageTaskParser(Node):
             self.get_logger().warn(f"Natural language task rejected: {reason}; text={text!r}")
             return
 
+        if source == "ollama":
+            sources_valid, source_reason = self.validate_source_spans(text, parsed)
+            if not sources_valid:
+                self.publish_status(
+                    False,
+                    source_reason,
+                    source=source,
+                    text=text,
+                )
+                self.get_logger().warn(
+                    f"Natural language task rejected: {source_reason}; text={text!r}"
+                )
+                return
+
         task = {"pick": pick, "place": place}
         if not self.dry_run:
             self.task_pub.publish(String(data=json.dumps(task, ensure_ascii=False)))
@@ -276,11 +290,14 @@ class NaturalLanguageTaskParser(Node):
             raise TimeoutError("model warmup did not finish")
 
         system_prompt = (
-            "Extract the complete object-to-pick phrase and destination phrase from one "
-            "Korean or English robot pick-and-place command. Translate each phrase into "
-            "a concise lowercase English visual noun phrase. Preserve every stated visual "
-            "attribute, including color, material, state, and object class; never replace "
-            "or invent an object or attribute. A missing color or material is not ambiguous. "
+            "Extract the pick object and destination from one Korean or English robot "
+            "pick-and-place command. pick_source and place_source MUST be exact character "
+            "substrings copied from the user's original command, in the original language; "
+            "never translate these two source fields and omit only Korean particles. "
+            "Translate pick_source and place_source independently into concise lowercase "
+            "English visual noun phrases. Never copy a color, material, state, or object "
+            "class from one source phrase to the other, and never invent an omitted "
+            "attribute. A missing color or material is not ambiguous. "
             "Set needs_clarification true and leave pick and place empty only when the pick "
             "object or destination itself is absent, a reference such as it/there is "
             "unresolved, the request is not pick-and-place, or it contains multiple tasks. "
@@ -289,12 +306,21 @@ class NaturalLanguageTaskParser(Node):
         response_schema = {
             "type": "object",
             "properties": {
+                "pick_source": {"type": "string"},
+                "place_source": {"type": "string"},
                 "pick": {"type": "string"},
                 "place": {"type": "string"},
                 "needs_clarification": {"type": "boolean"},
                 "reason": {"type": "string"},
             },
-            "required": ["pick", "place", "needs_clarification", "reason"],
+            "required": [
+                "pick_source",
+                "place_source",
+                "pick",
+                "place",
+                "needs_clarification",
+                "reason",
+            ],
         }
         request_body = {
             "model": self.model,
