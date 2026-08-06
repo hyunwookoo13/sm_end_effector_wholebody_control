@@ -126,3 +126,51 @@ ros2 launch ee_switch_debug \
 Only package/import/resource paths may change during extraction. Node names,
 topics, actions, frames, QoS, parameters, controller values, and behavior must
 match this baseline.
+
+## Final automated verification (2026-08-06)
+
+The final source tree contains exactly eight ROS 2 packages:
+
+```text
+sm_base_control_manager
+sm_bringup
+sm_ee_wholebody_control
+sm_florence_2_vlm_ros2
+sm_grasping_ros2
+sm_natural_language_task
+sm_navigation_nav2
+sm_task_orchestrator
+```
+
+A fresh prefix under `/tmp/sm-phase2-*` was used so the former package could
+not resolve through stale files in the normal workspace overlay. The low-CPU
+build completed with **8 packages finished in 4.27s**.
+
+The final-owner source suite completed with **96 passed in 0.55s**. This is the
+original 90 behavioral tests plus six package/bringup ownership-contract tests.
+
+Installed ownership checks returned:
+
+```text
+sm_task_orchestrator pick_place_task_manager
+sm_ee_wholebody_control arm_yaw_rho_z_position_controller
+sm_ee_wholebody_control fixed_camera_tf_publisher
+```
+
+`sm_bringup/natural_language_pick_place.launch.py --show-args` retained the
+protected defaults, including `enable_nav2=false`, pick/place standoff `0.70`,
+hybrid distances `1.40`/`0.85`, and `local_llm_model=gemma3:4b`.
+
+The isolated overlay could not resolve `ee_switch_debug`, and live source
+scans found no Python import, launch package owner, or `FindPackageShare`
+reference to it. Historical material is retained under
+`ros2_ws/docs/archive/ee_switch_debug/` with a warning that its commands are
+not current instructions.
+
+`sm_bringup` is a launch-only `ament_python` metadata package with no runtime
+node or console script. This matches the workspace's package pattern and
+avoids the host Miniforge interpreter being selected by `ament_cmake` without
+the ROS `catkin_pkg` module.
+
+The remaining external gate is the Isaac Sim red-can/orange consecutive-task
+regression using the new `sm_bringup` entry point.
