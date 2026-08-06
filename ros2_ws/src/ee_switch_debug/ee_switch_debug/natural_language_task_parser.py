@@ -342,10 +342,10 @@ class NaturalLanguageTaskParser(Node):
 
     def translate_visual_query(self, source: str) -> str:
         system_prompt = (
-            "Translate exactly one Korean or English visual noun phrase into a concise "
-            "lowercase English visual noun phrase. Preserve every stated color, material, "
-            "state, and object class. Never add an omitted attribute, command verb, or "
-            "Korean particle. Return JSON only."
+            "한국어 또는 영어로 된 visual noun phrase 하나를 영어 소문자 명사구로 "
+            "정확히 번역하세요. 한국어 조사는 제거하되, 색상·재질·상태·물체 종류를 "
+            "빠짐없이 직역하세요. 특히 재질 표현도 반드시 query에 포함하세요. "
+            "입력에 없는 속성이나 동작은 추가하지 말고 JSON만 반환하세요."
         )
         response_schema = {
             "type": "object",

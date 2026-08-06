@@ -304,6 +304,7 @@ def test_ollama_requests_extract_then_translate_each_target_in_isolation(monkeyp
     translation_prompt = captured_bodies[1]["messages"][0]["content"]
     assert "exact character substrings" in extraction_prompt
     assert "visual noun phrase" in translation_prompt
+    assert "한국어" in translation_prompt
 
 
 def test_warm_ollama_model_loads_without_generating_text(monkeypatch):
