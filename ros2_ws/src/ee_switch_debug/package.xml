@@ -19,6 +19,7 @@
   <exec_depend>sm_grasping_ros2</exec_depend>
   <exec_depend>sm_natural_language_task</exec_depend>
   <exec_depend>sm_navigation_nav2</exec_depend>
+  <exec_depend>sm_base_control_manager</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
 

@@ -35,7 +35,6 @@ setup(
             "l100_pointer_target = ee_switch_debug.l100_pointer_target:main",
             "live_yaw_rho_z_monitor = ee_switch_debug.live_yaw_rho_z_monitor:main",
             "mobile_target_controller = ee_switch_debug.mobile_target_controller:main",
-            "navigation_cmd_mux = ee_switch_debug.navigation_cmd_mux:main",
             "pick_place_task_manager = ee_switch_debug.pick_place_task_manager:main",
             "target_arm_ik_controller = ee_switch_debug.target_arm_ik_controller:main",
             "target_base_controller = ee_switch_debug.target_base_controller:main",

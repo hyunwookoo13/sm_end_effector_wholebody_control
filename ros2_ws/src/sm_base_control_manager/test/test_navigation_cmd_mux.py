@@ -1,6 +1,10 @@
 from pytest import approx
 
-from ee_switch_debug.navigation_cmd_mux import selected_source, slew_value, smooth_blend_value
+from sm_base_control_manager.navigation_cmd_mux import (
+    selected_source,
+    slew_value,
+    smooth_blend_value,
+)
 
 
 def test_navigation_mode_selects_navigation_command():

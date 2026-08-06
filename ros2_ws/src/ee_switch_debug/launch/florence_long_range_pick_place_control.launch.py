@@ -175,7 +175,7 @@ def generate_launch_description():
     )
 
     navigation_cmd_mux = Node(
-        package="ee_switch_debug",
+        package="sm_base_control_manager",
         executable="navigation_cmd_mux",
         name="navigation_cmd_mux",
         output="screen",
