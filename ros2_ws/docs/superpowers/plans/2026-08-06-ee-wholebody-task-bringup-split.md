@@ -71,7 +71,7 @@ git commit -m "docs: freeze phase two runtime baseline"
 - Create: `ros2_ws/src/sm_task_orchestrator/{package.xml,setup.py,setup.cfg}`
 - Create: `ros2_ws/src/sm_task_orchestrator/resource/sm_task_orchestrator`
 - Create: `ros2_ws/src/sm_task_orchestrator/sm_task_orchestrator/__init__.py`
-- Create: `ros2_ws/src/sm_task_orchestrator/test/test_package_contract.py`
+- Create: `ros2_ws/src/sm_task_orchestrator/test/test_task_orchestrator_package_contract.py`
 - Move: `ee_switch_debug/pick_place_task_manager.py` and `navigation_geometry.py` into the new Python module directory.
 - Move: `test_consecutive_task_retreat.py`, `test_navigation_geometry.py`, `test_pick_place_precache.py`, and `test_semantic_box_aliases.py` into the new test directory.
 - Modify: moved tests only for package imports.
@@ -100,7 +100,7 @@ def test_task_modules_are_owned_here():
 ```
 
 ```bash
-/usr/bin/python3 -m pytest src/sm_task_orchestrator/test/test_package_contract.py -q
+/usr/bin/python3 -m pytest src/sm_task_orchestrator/test/test_task_orchestrator_package_contract.py -q
 ```
 
 Expected: FAIL because package metadata and moved modules do not exist yet.
@@ -175,7 +175,7 @@ git commit -m "refactor: extract task orchestrator package"
 - Move: legacy `config/*.yaml` into the new config directory.
 - Move: `arm_position_target_in.launch.py`, `grasp_wholebody.launch.py`, and `wholebody_monitor.launch.py` into the new launch directory.
 - Move: `test_wrist_orientation.py` into the new test directory.
-- Create: `ros2_ws/src/sm_ee_wholebody_control/test/test_package_contract.py`
+- Create: `ros2_ws/src/sm_ee_wholebody_control/test/test_ee_wholebody_control_package_contract.py`
 - Modify: `ros2_ws/src/sm_grasping_ros2/launch/rsd455_florence_grasping.launch.py`
 
 **Interfaces:**
