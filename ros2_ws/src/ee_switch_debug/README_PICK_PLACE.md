@@ -18,7 +18,7 @@ ros2 launch ee_switch_debug florence_long_range_pick_place_control.launch.py \
 The natural-language console is unchanged:
 
 ```bash
-ros2 run ee_switch_debug natural_language_task_console
+ros2 run sm_natural_language_task natural_language_task_console
 ```
 
 Useful RViz displays are `/global_costmap/costmap`,
@@ -151,7 +151,7 @@ Option 2: run the interactive input console in another terminal:
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-ros2 run ee_switch_debug natural_language_task_console
+ros2 run sm_natural_language_task natural_language_task_console
 ```
 
 Then type a command and press Enter:
