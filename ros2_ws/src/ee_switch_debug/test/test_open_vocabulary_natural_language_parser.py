@@ -97,6 +97,41 @@ def test_validate_result_rejects_unresolved_visual_references():
     assert result[0] is False
 
 
+def test_source_spans_accept_distinct_phrases_from_original_command():
+    parser = make_parser_without_ros_node()
+    result = parser.validate_source_spans(
+        "사과를 노란색 박스에 넣어줘",
+        {
+            "pick_source": "사과",
+            "place_source": "노란색 박스",
+            "pick": "apple",
+            "place": "yellow box",
+        },
+    )
+
+    assert result == (True, "ok")
+
+
+def test_source_spans_reject_invented_phrase():
+    parser = make_parser_without_ros_node()
+    result = parser.validate_source_spans(
+        "사과를 노란색 박스에 넣어줘",
+        {"pick_source": "빨간 사과", "place_source": "노란색 박스"},
+    )
+
+    assert result == (False, "pick source is not present in command")
+
+
+def test_source_spans_reject_overlap():
+    parser = make_parser_without_ros_node()
+    result = parser.validate_source_spans(
+        "노란색 박스를 옮겨줘",
+        {"pick_source": "노란색 박스", "place_source": "박스"},
+    )
+
+    assert result == (False, "pick and place source spans overlap")
+
+
 def test_default_model_has_enough_capacity_for_multilingual_grounding():
     assert DEFAULT_OLLAMA_MODEL == "gemma3:4b"
 

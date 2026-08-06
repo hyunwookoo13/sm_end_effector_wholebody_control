@@ -436,6 +436,33 @@ class NaturalLanguageTaskParser(Node):
                 return canonical
         return None
 
+    def validate_source_spans(
+        self,
+        text: str,
+        payload: dict[str, Any] | None,
+    ) -> tuple[bool, str]:
+        if not isinstance(payload, dict):
+            return False, "parser returned no JSON object"
+
+        command = text.casefold()
+        spans = []
+        for field, label in (
+            ("pick_source", "pick"),
+            ("place_source", "place"),
+        ):
+            source = str(payload.get(field, "")).strip()
+            if not source:
+                return False, f"missing {label} source"
+            start = command.find(source.casefold())
+            if start < 0:
+                return False, f"{label} source is not present in command"
+            spans.append((start, start + len(source)))
+
+        pick_span, place_span = spans
+        if pick_span[0] < place_span[1] and place_span[0] < pick_span[1]:
+            return False, "pick and place source spans overlap"
+        return True, "ok"
+
     def validate_result(
         self,
         payload: dict[str, Any] | None,
