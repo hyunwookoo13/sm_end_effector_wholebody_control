@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>sm_bringup</name>
+  <version>0.0.0</version>
+  <description>Full-system launch composition for SM mobile manipulation.</description>
+  <maintainer email="gunmin0525@gmail.com">kiro</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>sm_base_control_manager</exec_depend>
+  <exec_depend>sm_ee_wholebody_control</exec_depend>
+  <exec_depend>sm_florence_2_vlm_ros2</exec_depend>
+  <exec_depend>sm_grasping_ros2</exec_depend>
+  <exec_depend>sm_natural_language_task</exec_depend>
+  <exec_depend>sm_navigation_nav2</exec_depend>
+  <exec_depend>sm_task_orchestrator</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
