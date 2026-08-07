@@ -172,5 +172,41 @@ node or console script. This matches the workspace's package pattern and
 avoids the host Miniforge interpreter being selected by `ament_cmake` without
 the ROS `catkin_pkg` module.
 
-The remaining external gate is the Isaac Sim red-can/orange consecutive-task
-regression using the new `sm_bringup` entry point.
+## Isaac Sim runtime regression (2026-08-07)
+
+The final `sm_bringup` entry point was exercised against the baseline Isaac
+Sim stage with `enable_nav2:=true`. Before bringup, `/clock`, `/joint_states`,
+and `/odom` were all live at approximately 28--29 Hz. All four Nav2 lifecycle
+nodes (`controller_server`, `planner_server`, `behavior_server`, and
+`bt_navigator`) reached `active [3]`, and `/cmd_vel` had exactly one publisher:
+`navigation_cmd_mux`.
+
+The command `빨간색 캔을 노란색 박스에 넣어줘` parsed to `red can` and
+`yellow box` and completed the full runtime sequence:
+
+```text
+NAVIGATE_PICK -> HANDOFF -> APPROACH -> DESCEND -> GRASP -> LIFT
+-> FIND_PLACE -> PLACE:APPROACH -> PLACE:DESCEND -> RELEASE -> DONE
+```
+
+The consecutive command `오렌지를 노란색 박스에 넣어줘` parsed to `orange`
+and `yellow box` and completed pick through `GRASP` and `LIFT`. Because the
+yellow box was only 0.333 m away, the preserved baseline rule skipped Nav2
+place (`0.333 m <= 1.200 m`) and used direct precision control. The subsequent
+place approach exposed a pre-existing reachability boundary: the target
+required approximately 0.798 rad at `joint1`, while the preserved upper limit
+is 0.6981 rad (40 degrees), leaving a constant 0.100 rad yaw error.
+
+This boundary was verified as unrelated to package extraction. The installed
+controller had one `/joint_position_command` publisher and Isaac Sim had one
+subscriber; command and feedback both stopped at 0.6981 rad. The extracted
+controller's SHA-256 exactly matched the `f8a7122` source
+(`983bb6a109e9d8ca5174946a7432f8adfab94554b94457956ded72ff32c43a37`),
+and its joint-limit configuration was unchanged. Resolving the nearby-place
+base-alignment/reachability behavior is therefore a later control change, not
+part of this ownership-only refactor.
+
+The first run also downloaded the 242 MB MobileCLIP asset and temporarily
+blocked a Nav2 heartbeat. After the asset was cached and the ROS stack alone
+was restarted, Nav2 remained active and the red-can task completed. This was
+a first-run model warm-up condition rather than a package ownership failure.
