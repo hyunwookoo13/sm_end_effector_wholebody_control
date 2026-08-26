@@ -1,0 +1,31 @@
+schema_version: "1.0"
+status_values: ["draft", "active", "blocked", "verified", "retired"]
+priority_values: ["must", "should", "could"]
+requirements:
+  - id: "REQ-R-001"
+    type: "research"
+    priority: "must"
+    statement: "The research contribution and its verification boundary must be explicit."
+    rationale: "A research project needs a falsifiable contribution boundary."
+    verification: "Charter, claim, and evaluation review."
+    status: "draft"
+    linked_rq: ["RQ-001"]
+    owner: "Hyunwoo Gu"
+  - id: "REQ-P-001"
+    type: "process"
+    priority: "must"
+    statement: "Every implementation task must link requirements, done conditions, tests, and research impact."
+    rationale: "Keep implementation decisions traceable to research intent."
+    verification: "Task registry validation."
+    status: "active"
+    linked_rq: []
+    owner: "Hyunwoo Gu"
+  - id: "REQ-P-002"
+    type: "process"
+    priority: "must"
+    statement: "Progress reports and presentations must preserve the cumulative research flow."
+    rationale: "Weekly reporting should show changes in the context of the whole research."
+    verification: "Report and slide-manifest review."
+    status: "active"
+    linked_rq: []
+    owner: "Hyunwoo Gu"

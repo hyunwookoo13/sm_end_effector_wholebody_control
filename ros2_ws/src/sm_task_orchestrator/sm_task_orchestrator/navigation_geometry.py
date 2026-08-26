@@ -50,6 +50,7 @@ def should_skip_navigation(
     goal_xy: tuple[float, float],
     goal_skip_distance_m: float,
     place_direct_approach_distance_m: float,
+    pick_direct_approach_distance_m: float = 0.0,
 ) -> tuple[bool, str]:
     """Decide whether precision control can take over without a Nav2 goal."""
     base_x, base_y = (float(value) for value in base_xy)
@@ -61,13 +62,17 @@ def should_skip_navigation(
         return True, f"navigation goal is nearby ({goal_distance:.3f}m)"
 
     object_distance = hypot(object_x - base_x, object_y - base_y)
-    direct_limit = max(0.0, float(place_direct_approach_distance_m))
-    if str(kind).strip().lower() == "place" and direct_limit > 0.0:
-        if object_distance <= direct_limit:
-            return True, (
-                "place target is inside precision approach range "
-                f"({object_distance:.3f}m <= {direct_limit:.3f}m)"
-            )
+    normalized_kind = str(kind).strip().lower()
+    direct_limits = {
+        "pick": max(0.0, float(pick_direct_approach_distance_m)),
+        "place": max(0.0, float(place_direct_approach_distance_m)),
+    }
+    direct_limit = direct_limits.get(normalized_kind, 0.0)
+    if direct_limit > 0.0 and object_distance <= direct_limit:
+        return True, (
+            f"{normalized_kind} target is inside precision approach range "
+            f"({object_distance:.3f}m <= {direct_limit:.3f}m)"
+        )
 
     return False, ""
 

@@ -1,0 +1,7 @@
+schema_version: "1.0"
+links:
+  - claim: "CLAIM-001"
+    evidence: []
+    figures: []
+    tables: []
+    sections: ["I", "III", "IV"]

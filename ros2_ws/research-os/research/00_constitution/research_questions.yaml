@@ -1,0 +1,7 @@
+schema_version: "1.0"
+research_questions:
+  - id: "RQ-001"
+    question: "TBD — what precise question will this research answer?"
+    status: "draft"
+    maturity: "provisional"
+    linked_claims: ["CLAIM-001"]

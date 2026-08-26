@@ -246,6 +246,12 @@ def is_wrist_aligned_for_phase(
     return max(abs(float(error)) for error in wrist_errors) <= float(tolerance)
 
 
+def initial_task_state(start_in_transport_mode: bool) -> tuple[str, bool, str]:
+    if bool(start_in_transport_mode):
+        return "TRANSPORT", True, "HOLD"
+    return "PICK", False, "APPROACH"
+
+
 class ArmYawRhoZPositionController(Node):
     def __init__(self) -> None:
         super().__init__("arm_yaw_rho_z_position_controller")
@@ -349,6 +355,7 @@ class ArmYawRhoZPositionController(Node):
         self.declare_parameter("place_descend_depth", 0.08)
         self.declare_parameter("place_open_duration", 0.8)
         self.declare_parameter("return_home_after_place", True)
+        self.declare_parameter("start_in_transport_mode", False)
         self.declare_parameter("gripper_joint_names", ["rh_l1", "rh_r1_joint"])
 
         self.arm_base_frame = str(self.get_parameter("arm_base_frame").value)
@@ -527,6 +534,9 @@ class ArmYawRhoZPositionController(Node):
         self.return_home_after_place = bool(
             self.get_parameter("return_home_after_place").value
         )
+        self.start_in_transport_mode = bool(
+            self.get_parameter("start_in_transport_mode").value
+        )
         self.gripper_joint_names = list(self.get_parameter("gripper_joint_names").value)
 
         self.joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
@@ -541,16 +551,22 @@ class ArmYawRhoZPositionController(Node):
         self.last_debug = "waiting for joint states"
 
         # Grasp sequence state
-        self.task_mode = "PICK"
-        self.force_safety_pose = False
-        self.grasp_phase = "APPROACH"  # APPROACH, DESCEND, GRASP, LIFT, HOLD
+        (
+            self.task_mode,
+            self.force_safety_pose,
+            self.grasp_phase,
+        ) = initial_task_state(self.start_in_transport_mode)
         self.grasp_z_offset, _ = pick_z_offsets(
             self.grasp_offset_z,
             self.grasp_descend_depth,
             self.grasp_approach_clearance_z,
         )
         self.grasp_phase_start_time = None
-        self.gripper_position = self.gripper_open_position
+        self.gripper_position = (
+            self.gripper_close_position
+            if self.start_in_transport_mode
+            else self.gripper_open_position
+        )
         self.lift_z_accumulated = 0.0
         self.place_wrist_hold_positions: list[float] | None = None
 
@@ -568,6 +584,7 @@ class ArmYawRhoZPositionController(Node):
         self.get_logger().info(
             f"Arm position controller: {self.arm_base_frame} -> {self.target_frame}, "
             f"base frame={self.base_frame}, publishing {joint_position_topic}, "
+            f"initial_task={self.task_mode}:{self.grasp_phase}, "
             f"link6 axes=[joint {self.grasp_link6_axis}, "
             f"gripper {self.grasp_gripper_closing_axis}, "
             f"target {self.grasp_target_closing_axis}]"
@@ -1343,7 +1360,11 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
-        node.cmd_pub.publish(Twist())
+        # launch may invalidate the ROS context before KeyboardInterrupt reaches
+        # this process. Only publish the final zero command while the publisher
+        # is still valid; the command mux also fails closed when its launch exits.
+        if rclpy.ok():
+            node.cmd_pub.publish(Twist())
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -105,6 +105,8 @@ DEFAULT_ALIASES = {
     "쟁반": "dish",
     "apple": "apple",
     "사과": "apple",
+    "orange": "orange",
+    "오렌지": "orange",
     "bottle": "bottle",
     "병": "bottle",
     "mug": "mug",
@@ -583,9 +585,12 @@ def main(args=None) -> None:
     node = NaturalLanguageTaskParser()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

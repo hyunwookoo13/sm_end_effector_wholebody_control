@@ -132,6 +132,7 @@ class PickPlaceTaskManager(Node):
         self.declare_parameter("pick_standoff_m", 0.70)
         self.declare_parameter("place_standoff_m", 0.70)
         self.declare_parameter("navigation_goal_skip_distance_m", 0.20)
+        self.declare_parameter("pick_direct_approach_distance_m", 1.20)
         self.declare_parameter("place_direct_approach_distance_m", 1.20)
         self.declare_parameter("enable_hybrid_handoff", True)
         self.declare_parameter("hybrid_outer_distance_m", 1.40)
@@ -148,6 +149,10 @@ class PickPlaceTaskManager(Node):
         self.declare_parameter("retreat_scan_timeout_sec", 0.50)
         self.declare_parameter("retreat_timeout_sec", 5.0)
         self.declare_parameter("transport_settle_sec", 1.0)
+        self.declare_parameter("external_place_navigation", False)
+        self.declare_parameter(
+            "phase_command_topic", "/pick_place_phase_command"
+        )
 
         self.task_topic = str(self.get_parameter("task_topic").value)
         self.target_objects_topic = str(self.get_parameter("target_objects_topic").value)
@@ -195,6 +200,10 @@ class PickPlaceTaskManager(Node):
             0.0,
             float(self.get_parameter("navigation_goal_skip_distance_m").value),
         )
+        self.pick_direct_approach_distance_m = max(
+            0.0,
+            float(self.get_parameter("pick_direct_approach_distance_m").value),
+        )
         self.place_direct_approach_distance_m = max(
             0.0,
             float(self.get_parameter("place_direct_approach_distance_m").value),
@@ -233,6 +242,12 @@ class PickPlaceTaskManager(Node):
         self.transport_settle_ns = int(
             max(0.0, float(self.get_parameter("transport_settle_sec").value)) * 1e9
         )
+        self.external_place_navigation = bool(
+            self.get_parameter("external_place_navigation").value
+        )
+        self.phase_command_topic = str(
+            self.get_parameter("phase_command_topic").value
+        ).strip()
 
         self.phase = "IDLE"
         self.arm_task_state = ""
@@ -264,6 +279,7 @@ class PickPlaceTaskManager(Node):
         self.departure_retreat_pending = False
         self.rear_clearance_m: float | None = None
         self.rear_scan_received_ns = 0
+        self.external_place_ready_ns = 0
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -285,6 +301,12 @@ class PickPlaceTaskManager(Node):
                 10,
             )
         self.create_subscription(String, self.arm_task_state_topic, self.on_arm_task_state, 10)
+        self.create_subscription(
+            String,
+            self.phase_command_topic,
+            self.on_phase_command,
+            10,
+        )
         self.create_subscription(
             LaserScan,
             str(self.get_parameter("rear_scan_topic").value),
@@ -424,6 +446,7 @@ class PickPlaceTaskManager(Node):
         )
         self.rear_clearance_m = None
         self.rear_scan_received_ns = 0
+        self.external_place_ready_ns = 0
         self.publish_target_object(force=True)
         if self.enable_navigation:
             self.publish_arm_command("RESET")
@@ -485,7 +508,13 @@ class PickPlaceTaskManager(Node):
         return int(stamp.sec) * 1_000_000_000 + int(stamp.nanosec)
 
     def on_detections(self, msg: String, source_topic: str = "") -> None:
-        if self.phase not in ("FIND_PICK", "PICK", "FIND_PLACE"):
+        if self.phase not in (
+            "FIND_PICK",
+            "PICK",
+            "PREPARE_PLACE_NAVIGATION",
+            "WAIT_PLACE_NAVIGATION",
+            "FIND_PLACE",
+        ):
             return
         try:
             payload = json.loads(msg.data)
@@ -719,6 +748,67 @@ class PickPlaceTaskManager(Node):
     def on_arm_task_state(self, msg: String) -> None:
         self.arm_task_state = msg.data.strip().upper()
 
+    def on_phase_command(self, msg: String) -> None:
+        command = msg.data.strip().upper()
+        if not self.external_place_navigation:
+            self.get_logger().warn(
+                f"Ignored external phase command while disabled: {command or '<empty>'}"
+            )
+            return
+        if command == "START_DEPARTURE_RETREAT":
+            if self.phase != "DONE":
+                self.get_logger().warn(
+                    "Ignored START_DEPARTURE_RETREAT while task phase is "
+                    f"{self.phase}"
+                )
+                return
+            self.publish_arm_command("TRANSPORT")
+            self.start_safe_retreat(next_phase="DONE")
+            self.last_debug = "safe retreat before the next semantic mission"
+            self.publish_task_state()
+            self.get_logger().warn(
+                "Task phase: DONE -> SAFE_RETREAT; leaving the completed "
+                "workspace before the next DB Nav2 goal"
+            )
+            return
+        if command == "START_PLACE_RETREAT":
+            if self.phase != "PREPARE_PLACE_NAVIGATION":
+                self.get_logger().warn(
+                    "Ignored START_PLACE_RETREAT while task phase is "
+                    f"{self.phase}"
+                )
+                return
+            self.start_safe_retreat(next_phase="WAIT_PLACE_NAVIGATION")
+            self.last_debug = "safe retreat before external place navigation"
+            self.publish_task_state()
+            self.get_logger().warn(
+                "Task phase: PREPARE_PLACE_NAVIGATION -> SAFE_RETREAT; "
+                "leaving the manipulation workspace before Nav2"
+            )
+            return
+        if command != "RESUME_PLACE":
+            self.get_logger().warn(f"Unknown external phase command: {msg.data!r}")
+            return
+        if self.phase != "WAIT_PLACE_NAVIGATION":
+            self.get_logger().warn(
+                f"Ignored RESUME_PLACE while task phase is {self.phase}"
+            )
+            return
+
+        # Require a fresh post-arrival detection instead of reusing a place
+        # pose cached while the robot was still traversing the map.
+        self.place_transform = None
+        self.selected_place_source = ""
+        self.current_transform = None
+        self.phase = "FIND_PLACE"
+        self.publish_base_mode("MANIPULATION")
+        self.last_debug = f"place navigation complete; refreshing {self.place_object}"
+        self.publish_task_state()
+        self.get_logger().warn(
+            "Task phase: WAIT_PLACE_NAVIGATION -> FIND_PLACE; "
+            "waiting for fresh post-arrival place detection"
+        )
+
     def on_rear_scan(self, msg: LaserScan) -> None:
         clearance = rear_sector_clearance(
             ranges=list(msg.ranges),
@@ -769,6 +859,7 @@ class PickPlaceTaskManager(Node):
             goal_xy=(planar_goal.x, planar_goal.y),
             goal_skip_distance_m=self.navigation_goal_skip_distance_m,
             place_direct_approach_distance_m=self.place_direct_approach_distance_m,
+            pick_direct_approach_distance_m=self.pick_direct_approach_distance_m,
         )
         if skip_navigation:
             self.maybe_start_departure_retreat(kind, skip_navigation=True)
@@ -988,6 +1079,18 @@ class PickPlaceTaskManager(Node):
                 )
                 self.last_target_objects_publish_ns = 0
                 self.publish_target_object(force=True)
+                if self.external_place_navigation:
+                    self.current_transform = None
+                    self.publish_arm_command("TRANSPORT")
+                    self.publish_base_mode("STOP")
+                    now_ns = self.get_clock().now().nanoseconds
+                    self.external_place_ready_ns = now_ns + self.transport_settle_ns
+                    self.phase = "PREPARE_PLACE_NAVIGATION"
+                    self.last_debug = "retracting arm before external place navigation"
+                    self.get_logger().warn(
+                        "Task phase: PICK -> PREPARE_PLACE_NAVIGATION"
+                    )
+                    return
                 if self.enable_navigation:
                     self.current_transform = None
                     direct_place, direct_reason = self.place_direct_approach_status()
@@ -1008,6 +1111,20 @@ class PickPlaceTaskManager(Node):
                             return
                 self.phase = "FIND_PLACE"
                 self.get_logger().warn("Task phase: PICK -> FIND_PLACE")
+
+        elif self.phase == "PREPARE_PLACE_NAVIGATION":
+            now_ns = self.get_clock().now().nanoseconds
+            if now_ns < self.external_place_ready_ns:
+                self.last_debug = "waiting for transport pose before place navigation"
+                return
+            self.phase = "WAIT_PLACE_NAVIGATION"
+            self.last_debug = "ready for external place navigation"
+            self.get_logger().warn(
+                "Task phase: PREPARE_PLACE_NAVIGATION -> WAIT_PLACE_NAVIGATION"
+            )
+
+        elif self.phase == "WAIT_PLACE_NAVIGATION":
+            self.last_debug = "holding object; waiting for external place navigation"
 
         elif self.phase == "SAFE_RETREAT":
             self.advance_safe_retreat()

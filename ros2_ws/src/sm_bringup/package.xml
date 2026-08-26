@@ -16,6 +16,7 @@
   <exec_depend>sm_grasping_ros2</exec_depend>
   <exec_depend>sm_natural_language_task</exec_depend>
   <exec_depend>sm_navigation_nav2</exec_depend>
+  <exec_depend>sm_semantic_map</exec_depend>
   <exec_depend>sm_task_orchestrator</exec_depend>
 
   <test_depend>python3-pytest</test_depend>

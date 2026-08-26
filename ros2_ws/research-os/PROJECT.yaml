@@ -1,0 +1,25 @@
+schema_version: "1.0"
+research_os_version: "1.0.0"
+project:
+  name: "ROS 2 Research Project"
+  working_title: "ROS 2 Research Project"
+  codename: "TBD"
+  owner: "Hyunwoo Gu"
+  status: "discovery"
+  target_venue: "TBD"
+  target_submission_date: "TBD"
+  primary_language: "Korean"
+  paper_language: "English"
+  development_repository: "/home/kiro/Desktop/hw_ws/ros2_ws"
+
+north_star:
+  statement: "TBD — define the durable research objective."
+  maturity: "provisional"
+
+operating_principles:
+  - "Requirements before implementation"
+  - "Architecture remains current"
+  - "Every change is traceable"
+  - "Evidence before claims"
+  - "Paper grows with the research"
+  - "Presentations remain cumulative"

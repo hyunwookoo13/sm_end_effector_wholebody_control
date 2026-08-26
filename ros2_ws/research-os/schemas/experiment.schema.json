@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research OS Experiment",
+  "type": "object",
+  "required": ["id", "title", "hypothesis", "status"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^EXP-[0-9]{3}$"},
+    "title": {"type": "string", "minLength": 1},
+    "hypothesis": {"type": "string", "minLength": 1},
+    "status": {"enum": ["idea", "planned", "ready", "running", "completed", "failed", "invalidated"]}
+  }
+}

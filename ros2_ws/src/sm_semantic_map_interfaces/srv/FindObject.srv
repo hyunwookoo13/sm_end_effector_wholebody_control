@@ -1,0 +1,15 @@
+string query
+string required_capability
+---
+bool found
+string message
+string object_id
+string canonical_name
+string semantic_class
+string[] capabilities
+string status
+string zone
+string source_sensor
+geometry_msgs/PoseStamped object_pose
+geometry_msgs/PoseStamped approach_pose
+float64 approach_clearance_m

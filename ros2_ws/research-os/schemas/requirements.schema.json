@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research OS Requirements",
+  "type": "object",
+  "required": ["schema_version", "requirements"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "priority", "statement", "status"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^REQ-[A-Z]-[0-9]{3}$"},
+          "type": {"type": "string"},
+          "priority": {"enum": ["must", "should", "could"]},
+          "statement": {"type": "string", "minLength": 1},
+          "status": {"enum": ["draft", "active", "blocked", "verified", "retired"]}
+        }
+      }
+    }
+  }
+}

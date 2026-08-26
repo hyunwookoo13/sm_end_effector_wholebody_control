@@ -1,0 +1,20 @@
+schema_version: "1.0"
+task_id: "TASK-YYYYMMDD-XX"
+title: "TBD"
+status: "planned"
+owner: "Hyunwoo Gu"
+objective: "TBD"
+related_requirements: []
+current_design: "TBD"
+planned_change: "TBD"
+reason: "TBD"
+assumptions: []
+done_conditions: ["TBD"]
+tests:
+  - name: "TBD"
+    command: "TBD"
+    expected: "TBD"
+paper_impact:
+  sections: []
+  expected_update: "TBD"
+out_of_scope: []

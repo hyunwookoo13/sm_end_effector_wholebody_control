@@ -1,0 +1,8 @@
+schema_version: "1.0"
+claims:
+  - id: "CLAIM-001"
+    statement: "TBD — provisional claim"
+    state: "hypothesis"
+    linked_requirements: ["REQ-R-001"]
+    evidence: []
+    scope: "TBD"

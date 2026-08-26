@@ -1,0 +1,143 @@
+schema_version: 1
+frame_id: map
+map_source: warehouse_isaac_occupancy_20260813/warehouse_map.yaml
+calibration:
+  observed_at: "2026-08-13T17:40:13+09:00"
+  method: median_of_live_rgbd_detections
+  map_pose_in_world:
+    x: 2.0666
+    y: -3.6084
+    yaw: -0.052598
+
+objects:
+  - object_id: red_can
+    canonical_name: red can
+    aliases: [red_can, red can, 빨간 캔]
+    semantic_class: can
+    capabilities: [pick]
+    zone: first_table
+    source_sensor: rsd455
+    status: AVAILABLE
+    object_pose:
+      x: 4.549
+      y: 4.321
+      z: 0.819
+    approach_pose:
+      x: 3.549
+      y: 4.321
+      yaw: 0.0
+    approach_clearance_m: 0.922
+    observation:
+      samples: 31
+      confidence_median: 0.443
+      planar_stddev_m: 0.000234
+
+  - object_id: orange
+    canonical_name: orange
+    aliases: [orange, 오렌지]
+    semantic_class: orange
+    capabilities: [pick]
+    zone: first_table
+    source_sensor: rsd455
+    status: AVAILABLE
+    object_pose:
+      x: 4.680
+      y: 4.272
+      z: 0.821
+    approach_pose:
+      x: 3.680
+      y: 4.272
+      yaw: 0.0
+    approach_clearance_m: 0.791
+    observation:
+      samples: 12
+      confidence_median: 0.283
+      planar_stddev_m: 0.000015
+
+  - object_id: yellow_box
+    canonical_name: yellow box
+    aliases: [yellow_box, yellow box, yellow tray, 노란 박스, 노란 상자]
+    semantic_class: box
+    capabilities: [place]
+    zone: first_table
+    source_sensor: rsd455
+    status: AVAILABLE
+    object_pose:
+      x: 4.630
+      y: 4.574
+      z: 0.754
+    approach_pose:
+      x: 3.630
+      y: 4.574
+      yaw: 0.0
+    approach_clearance_m: 0.802
+    observation:
+      samples: 31
+      confidence_median: 0.113
+      planar_stddev_m: 0.000310
+
+  - object_id: apple
+    canonical_name: apple
+    aliases: [apple, 사과]
+    semantic_class: apple
+    capabilities: [pick]
+    zone: second_table
+    source_sensor: rsd455_2
+    status: AVAILABLE
+    object_pose:
+      x: -0.904
+      y: -7.271
+      z: 0.840
+    approach_pose:
+      x: -0.904
+      y: -6.271
+      yaw: -1.570796
+    approach_clearance_m: 0.652
+    observation:
+      samples: 12
+      confidence_median: 0.938
+      planar_stddev_m: 0.000360
+
+  - object_id: blue_can
+    canonical_name: blue can
+    aliases: [blue_can, blue can, 파란 캔]
+    semantic_class: can
+    capabilities: [pick]
+    zone: second_table
+    source_sensor: rsd455_2
+    status: AVAILABLE
+    object_pose:
+      x: -0.917
+      y: -7.111
+      z: 0.827
+    approach_pose:
+      x: -0.917
+      y: -6.111
+      yaw: -1.570796
+    approach_clearance_m: 0.802
+    observation:
+      samples: 12
+      confidence_median: 0.743
+      planar_stddev_m: 0.000300
+
+  - object_id: pink_box
+    canonical_name: pink box
+    aliases: [pink_box, pink box, pink tray, 분홍 박스, 분홍 상자]
+    semantic_class: box
+    capabilities: [place]
+    zone: second_table
+    source_sensor: rsd455_2
+    status: AVAILABLE
+    object_pose:
+      x: -0.600
+      y: -7.101
+      z: 0.763
+    approach_pose:
+      x: -0.600
+      y: -6.101
+      yaw: -1.570796
+    approach_clearance_m: 0.802
+    observation:
+      samples: 12
+      confidence_median: 0.554
+      planar_stddev_m: 0.000029

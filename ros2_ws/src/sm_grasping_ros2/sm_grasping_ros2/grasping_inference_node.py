@@ -199,7 +199,7 @@ class AnyGraspInferenceNode(Node):
 
     def _target_objects_callback(self, msg: String) -> None:
         target_key = self._parse_roi_target_key(msg.data)
-        if not target_key or target_key == self._target_key:
+        if target_key == self._target_key:
             return
         self._target_key = target_key
         self._accept_cloud_after_ns = self.get_clock().now().nanoseconds + int(
@@ -209,9 +209,14 @@ class AnyGraspInferenceNode(Node):
             self._latest_cloud = None
         self._ema_state = EmaFilterState()
         self._wrapper.reset_tracking_state()
-        self.get_logger().warn(
-            f"Grasp target changed to {list(target_key)}; cleared stale ROI/EMA state"
-        )
+        if target_key:
+            self.get_logger().warn(
+                f"Grasp target changed to {list(target_key)}; cleared stale ROI/EMA state"
+            )
+        else:
+            self.get_logger().warn(
+                "Grasp target cleared; cleared stale ROI/EMA state"
+            )
 
     @staticmethod
     def _parse_roi_target_key(text: str) -> tuple[str, ...]:
@@ -629,9 +634,12 @@ def main(args=None):
     node = AnyGraspInferenceNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

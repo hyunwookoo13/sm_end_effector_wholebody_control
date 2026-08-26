@@ -8,3 +8,5 @@ def test_default_aliases_support_green_cup_and_pink_box():
     assert aliases["초록 컵"] == "green cup"
     assert aliases["pink box"] == "pink box"
     assert aliases["분홍 박스"] == "pink box"
+    assert aliases["orange"] == "orange"
+    assert aliases["오렌지"] == "orange"

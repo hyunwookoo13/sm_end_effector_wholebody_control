@@ -22,6 +22,8 @@ setup(
     entry_points={
         "console_scripts": [
             "pick_place_task_manager = sm_task_orchestrator.pick_place_task_manager:main",
+            "semantic_nav2_adapter = sm_task_orchestrator.semantic_nav2_adapter:main",
+            "semantic_task_resolver = sm_task_orchestrator.semantic_task_resolver:main",
         ],
     },
 )

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config/v0.10"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config/v0.10 https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface autodetermine="true" priority="default" multicast="true"/>
+      </Interfaces>
+      <AllowMulticast>true</AllowMulticast>
+      <MaxMessageSize>65500B</MaxMessageSize>
+    </General>
+
+    <SharedMemory>
+      <Enable>false</Enable>
+    </SharedMemory>
+
+    <Internal>
+      <SocketReceiveBufferSize min="10MB"/>
+      <Watermarks>
+        <WhcHigh>1MB</WhcHigh>
+      </Watermarks>
+    </Internal>
+
+    <Compatibility>
+      <ManySocketsMode>true</ManySocketsMode>
+    </Compatibility>
+
+    <Tracing>
+      <Verbosity>config</Verbosity>
+      <OutputFile>stdout</OutputFile>
+    </Tracing>
+  </Domain>
+</CycloneDDS>

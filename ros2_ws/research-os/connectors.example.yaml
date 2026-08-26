@@ -1,0 +1,11 @@
+schema_version: "1.0"
+notion:
+  enabled: false
+  dashboard_page_id: "TBD"
+  task_database_id: "TBD"
+google_drive:
+  enabled: false
+  folder_id: "TBD"
+google_slides:
+  enabled: false
+  cumulative_deck_id: "TBD"

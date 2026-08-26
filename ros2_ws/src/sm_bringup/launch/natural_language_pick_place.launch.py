@@ -145,6 +145,10 @@ def generate_launch_description():
                     LaunchConfiguration("enable_nav2"),
                     value_type=bool,
                 ),
+                "external_place_navigation": ParameterValue(
+                    LaunchConfiguration("external_place_navigation"),
+                    value_type=bool,
+                ),
                 "navigation_base_frame": "chassis_link",
                 "pick_standoff_m": ParameterValue(
                     LaunchConfiguration("pick_standoff_m"),
@@ -152,6 +156,10 @@ def generate_launch_description():
                 ),
                 "place_standoff_m": ParameterValue(
                     LaunchConfiguration("place_standoff_m"),
+                    value_type=float,
+                ),
+                "pick_direct_approach_distance_m": ParameterValue(
+                    LaunchConfiguration("pick_direct_approach_distance_m"),
                     value_type=float,
                 ),
                 "place_direct_approach_distance_m": ParameterValue(
@@ -355,8 +363,13 @@ def generate_launch_description():
             DeclareLaunchArgument("autostart", default_value="true"),
             DeclareLaunchArgument("enable_base_motion", default_value="true"),
             DeclareLaunchArgument("enable_nav2", default_value="false"),
+            DeclareLaunchArgument(
+                "external_place_navigation",
+                default_value="false",
+            ),
             DeclareLaunchArgument("pick_standoff_m", default_value="0.70"),
             DeclareLaunchArgument("place_standoff_m", default_value="0.70"),
+            DeclareLaunchArgument("pick_direct_approach_distance_m", default_value="1.20"),
             DeclareLaunchArgument("place_direct_approach_distance_m", default_value="1.20"),
             DeclareLaunchArgument("enable_hybrid_handoff", default_value="true"),
             DeclareLaunchArgument("hybrid_outer_distance_m", default_value="1.40"),

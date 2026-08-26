@@ -15,6 +15,7 @@ def test_manifest_depends_on_runtime_packages():
         "sm_grasping_ros2",
         "sm_natural_language_task",
         "sm_navigation_nav2",
+        "sm_semantic_map",
         "sm_task_orchestrator",
     } <= dependencies
 
@@ -26,3 +27,14 @@ def test_canonical_launch_has_new_owners_only():
     assert 'package="sm_task_orchestrator"' in launch_text
     assert 'package="sm_ee_wholebody_control"' in launch_text
     assert "ee_switch_debug" not in launch_text
+
+
+def test_semantic_lookup_launch_is_read_only_and_modular():
+    launch_text = (
+        PACKAGE_ROOT / "launch" / "semantic_task_lookup.launch.py"
+    ).read_text()
+    assert 'package="sm_semantic_map"' in launch_text
+    assert 'package="sm_natural_language_task"' in launch_text
+    assert 'package="sm_task_orchestrator"' in launch_text
+    assert "nav2" not in launch_text.lower()
+    assert "cmd_vel" not in launch_text

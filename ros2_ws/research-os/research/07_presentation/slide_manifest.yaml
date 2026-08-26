@@ -1,0 +1,19 @@
+schema_version: "1.0"
+deck:
+  title: "ROS 2 Research Project — Cumulative Research Update"
+  mode: "cumulative"
+  preserve_previous_structure: true
+  google_slides_url: "TBD"
+slides:
+  - id: "SLIDE-01"
+    title: "North Star and Current Position"
+    marker: "NEW"
+    sources: ["PROJECT.yaml", "research/05_progress/current_status.yaml"]
+  - id: "SLIDE-02"
+    title: "Research Questions and Claims"
+    marker: "NEW"
+    sources: ["research/00_constitution/research_questions.yaml", "research/00_constitution/core_claims.yaml"]
+  - id: "SLIDE-03"
+    title: "Roadmap, Tasks, and Blockers"
+    marker: "NEW"
+    sources: ["research/05_progress/roadmap.yaml", "research/08_tasks/task_registry.yaml"]

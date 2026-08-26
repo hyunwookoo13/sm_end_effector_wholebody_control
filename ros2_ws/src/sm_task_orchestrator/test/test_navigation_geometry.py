@@ -87,6 +87,21 @@ def test_pick_navigation_is_not_skipped_by_place_direct_range():
     assert skip is False
 
 
+def test_pick_navigation_is_skipped_inside_pick_direct_approach_range():
+    skip, reason = should_skip_navigation(
+        kind="pick",
+        base_xy=(0.0, 0.0),
+        object_xy=(1.1, 0.0),
+        goal_xy=(0.4, 0.0),
+        goal_skip_distance_m=0.2,
+        place_direct_approach_distance_m=1.2,
+        pick_direct_approach_distance_m=1.2,
+    )
+
+    assert skip is True
+    assert "pick target is inside precision approach range" in reason
+
+
 def test_navigation_is_still_skipped_when_standoff_goal_is_nearby():
     skip, reason = should_skip_navigation(
         kind="pick",

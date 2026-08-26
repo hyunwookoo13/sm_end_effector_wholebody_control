@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "research_os_version": "1.0.0",
+  "installed_at": "2026-08-26",
+  "managed_files": {
+    "Makefile": "8eb025260b57a8b70d9b8a641005dc7198afbb7bee533e64971bd4246093ce96",
+    "requirements.txt": "c9e3d5b71ce6e54e3c1cd3e97da9a4682811879f2ed85455982ccb9a035fd158",
+    "VERSION": "59854984853104df5c353e2f681a15fc7924742f9a2e468c29af248dce45ce03",
+    "schemas/experiment.schema.json": "e4559f3a424fa7c55ae829ddf1294d7e71d2005b1ca88c0e233c90555b9851c0",
+    "schemas/requirements.schema.json": "059fabbb4ca887a86c574c1466bb0ebbd0cdd11fba88c59b062600182f049a9e",
+    "schemas/task.schema.json": "ac3338ba4502bb3d9567bf2ea119bb5215970379693d4a5c3cc74b5d311250aa",
+    "scripts/build_meeting_packet.py": "902feead89a392f9642a0c72a9a00793042f6342013ac02838247be4427f5ff2",
+    "scripts/build_notion_report.py": "367e73ceb805d29d8547161902a507a2e71adaa5e540622a8a5b763437396a7e",
+    "scripts/common.py": "a8f596267f037ec11401649df15550686ecf474d7ca43e6e44bda8c20a8bab47",
+    "scripts/new_experiment.py": "5f2af532bf17278478cd18a3aa623b9c64dec867d88fb0c271e83bde68ce792a",
+    "scripts/new_paper.py": "8911e9d72ad9866689e2d9c1c4937fec9f8ddaa21951f751be79ec931c7b74d3",
+    "scripts/new_task.py": "06ad7edf6ae58349b5a3ce2402a5127cd3602e7995fb70b6bb9147fb9d0265be",
+    "scripts/new_week.py": "9c94dd0dd7aabcb611f9cfbea8818534e5c54cacd7fbdd7d8d7050caffaceb8e",
+    "scripts/snapshot_project.py": "5e0807f785c7327d5f46b33146f26afaed3c78fcc790022ee925064d46fce3b7",
+    "scripts/validate_research_os.py": "f909f276edd04869132be9570450fd790a340c844270f0afdfea1afb1ba5f196"
+  },
+  "ownership": {
+    "template_managed": [
+      "scripts/",
+      "schemas/",
+      "Makefile",
+      "requirements.txt",
+      "VERSION"
+    ],
+    "project_owned": [
+      "PROJECT.yaml",
+      "AGENTS.md",
+      "research/",
+      "exports/"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Generated projections
+exports/notion/*
+exports/reports/*
+exports/slides/*
+
+# Optional local connector target IDs and credentials
+connectors.local.yaml

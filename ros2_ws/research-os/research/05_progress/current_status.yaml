@@ -1,0 +1,28 @@
+schema_version: "1.0"
+last_updated: "2026-08-26"
+phase: "Research initialization"
+health: "green"
+current_focus:
+  - "Define the research charter and first verifiable requirement."
+progress_summary:
+  completed:
+    - "Research OS initialized."
+  in_progress:
+    - "Problem definition"
+  not_started:
+    - "Primary prototype"
+    - "Primary evaluation"
+active_tasks: []
+active_experiments: []
+blockers: []
+open_decisions:
+  - "What is the smallest defensible research contribution?"
+paper_status:
+  maturity: "skeleton"
+  strongest_section: "TBD"
+  weakest_section: "TBD"
+  supported_claims: 0
+presentation_status:
+  cumulative_deck_ready: false
+  latest_manifest: "research/07_presentation/slide_manifest.yaml"
+  next_meeting_date: "TBD"

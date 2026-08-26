@@ -1,0 +1,20 @@
+schema_version: "1.0"
+links:
+  - requirement: "REQ-R-001"
+    architecture: []
+    experiments: []
+    claims: ["CLAIM-001"]
+    paper_sections: ["I", "III", "IV"]
+    slides: ["SLIDE-02"]
+  - requirement: "REQ-P-001"
+    architecture: []
+    experiments: []
+    claims: []
+    paper_sections: []
+    slides: ["SLIDE-03"]
+  - requirement: "REQ-P-002"
+    architecture: []
+    experiments: []
+    claims: []
+    paper_sections: []
+    slides: ["SLIDE-01", "SLIDE-02", "SLIDE-03"]

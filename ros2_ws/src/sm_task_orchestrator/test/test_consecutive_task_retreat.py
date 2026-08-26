@@ -1,4 +1,5 @@
 from geometry_msgs.msg import TransformStamped
+from std_msgs.msg import String
 
 from sm_task_orchestrator.pick_place_task_manager import (
     PickPlaceTaskManager,
@@ -47,6 +48,28 @@ def test_remote_pick_starts_transport_retreat_before_navigation():
         ("arm", "TRANSPORT"),
         ("retreat", "FIND_PICK"),
     ]
+
+
+def test_external_consecutive_mission_can_request_departure_retreat():
+    manager = make_retreat_manager()
+    manager.external_place_navigation = True
+    manager.phase = "DONE"
+    manager.publish_task_state = lambda: manager.events.append(("state", "published"))
+    manager.last_debug = ""
+    manager.get_logger = lambda: type(
+        "Logger",
+        (),
+        {"warn": lambda self, message: None},
+    )()
+
+    manager.on_phase_command(String(data="START_DEPARTURE_RETREAT"))
+
+    assert manager.events == [
+        ("arm", "TRANSPORT"),
+        ("retreat", "DONE"),
+        ("state", "published"),
+    ]
+    assert manager.last_debug == "safe retreat before the next semantic mission"
 
 
 def make_completed_retreat_manager(next_phase):
@@ -103,6 +126,7 @@ def test_remote_pick_retreats_before_submitting_nav2_goal():
     manager.pick_standoff_m = 0.70
     manager.place_standoff_m = 0.70
     manager.navigation_goal_skip_distance_m = 0.20
+    manager.pick_direct_approach_distance_m = 1.20
     manager.place_direct_approach_distance_m = 1.20
 
     base_transform = TransformStamped()
@@ -129,6 +153,44 @@ def test_remote_pick_retreats_before_submitting_nav2_goal():
 
     assert result == "retreating"
     assert manager.events[-1] == ("retreat", "FIND_PICK")
+
+
+def test_near_pick_skips_departure_retreat_and_nav2_goal():
+    manager = make_retreat_manager()
+    manager.parent_frame = "odom"
+    manager.navigation_base_frame = "chassis_link"
+    manager.tf_timeout_sec = 0.1
+    manager.pick_standoff_m = 0.70
+    manager.place_standoff_m = 0.70
+    manager.navigation_goal_skip_distance_m = 0.20
+    manager.pick_direct_approach_distance_m = 1.20
+    manager.place_direct_approach_distance_m = 1.20
+
+    base_transform = TransformStamped()
+    manager.tf_buffer = type(
+        "Buffer",
+        (),
+        {"lookup_transform": lambda self, *args, **kwargs: base_transform},
+    )()
+    manager.navigation_client = type(
+        "NavigationClient",
+        (),
+        {
+            "server_is_ready": lambda self: True,
+            "send_goal_async": lambda self, goal: (_ for _ in ()).throw(
+                AssertionError("Nav2 goal submitted for nearby pick")
+            ),
+        },
+    )()
+
+    target = TransformStamped()
+    target.transform.translation.x = 1.10
+
+    result = manager.request_navigation("pick", target)
+
+    assert result == "not_needed"
+    assert manager.departure_retreat_pending is False
+    assert manager.events == []
 
 
 def test_find_pick_does_not_fall_through_while_retreating():
