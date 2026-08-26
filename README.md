@@ -1,92 +1,158 @@
-# Semantic Mobile Manipulation Orchestration
+<p align="center">
+  <img src="docs/architecture/readme_hero.svg" width="100%" alt="Semantic Mobile Manipulation — composable ROS 2 orchestration">
+</p>
 
-Modular ROS 2 system for natural-language object selection, Semantic DB lookup,
-Nav2 travel, RGB-D grasp refinement, and whole-body Pick & Place in Isaac Sim.
-The current design keeps the previously validated fast Pick & Place pipeline
-intact and adds replaceable orchestration modules in front of it.
+<p align="center">
+  <img alt="ROS 2 Humble" src="https://img.shields.io/badge/ROS_2-Humble-22314E?style=flat-square&logo=ros&logoColor=white">
+  <img alt="NVIDIA Isaac Sim" src="https://img.shields.io/badge/Simulation-NVIDIA_Isaac_Sim-76B900?style=flat-square&logo=nvidia&logoColor=white">
+  <img alt="Navigation" src="https://img.shields.io/badge/Navigation-Nav2-0EA5E9?style=flat-square">
+  <img alt="Python 3.10" src="https://img.shields.io/badge/Python-3.10-3776AB?style=flat-square&logo=python&logoColor=white">
+  <img alt="Project status" src="https://img.shields.io/badge/Status-Integrated_MVP-10B981?style=flat-square">
+</p>
 
-## Current MVP
+<p align="center">
+  <strong>A modular mobile-manipulation stack that connects natural-language intent to semantic lookup, autonomous navigation, and precise whole-body Pick &amp; Place.</strong>
+</p>
+
+<p align="center">
+  <a href="#overview">Overview</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#capability-status">Status</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#packages">Packages</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
+
+---
+
+## Overview
+
+This repository implements a composable ROS 2 orchestration layer for semantic
+mobile manipulation in Isaac Sim. A natural-language command is resolved
+against a static object database, converted into a Nav2 approach goal, and then
+handed to the previously validated RGB-D and whole-body manipulation pipeline.
+
+The central engineering constraint is simple: **extend the system without
+replacing the motion behavior that already works**.
+
+| Concern | System approach |
+|---|---|
+| Task input | Korean or English natural-language Pick & Place command |
+| Semantic memory | SQLite object records with `map`-frame positions and prevalidated approach poses |
+| Long-range motion | Nav2 on a fixed 2D occupancy map |
+| Local refinement | Fresh dual RGB-D detection, depth, TF, and grasp estimation near the workspace |
+| Manipulation | Existing end-effector-targeted base/arm switching and whole-body control |
+| Command safety | A single base-command mux arbitrates navigation and manipulation velocity sources |
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    A[Natural-language command] --> B[Task parser]
-    B --> C[Static Semantic DB]
-    C --> D[Nav2 approach pose]
-    D --> E[Fresh RGB-D perception]
-    E --> F[Existing Whole-body Pick & Place]
+    UI["Natural-language command"] --> NLP["Task parser"]
+
+    subgraph SEM["Semantic orchestration"]
+        NLP --> RES["Semantic task resolver"]
+        RES <--> DB[("Static Semantic DB")]
+        RES --> MISSION["Mission orchestrator"]
+    end
+
+    subgraph GLOBAL["Global approach"]
+        MISSION --> ADAPTER["Semantic Nav2 adapter"]
+        ADAPTER --> NAV2["Nav2"]
+        MAP["2D occupancy map"] --> NAV2
+    end
+
+    subgraph LOCAL["Local perception & manipulation"]
+        CAM["Dual RGB-D cameras"] --> DET["YOLOE + color validation"]
+        DET --> GRASP["Depth grasp estimation"]
+        GRASP --> TASK["Existing Pick & Place manager"]
+        MISSION --> TASK
+        TASK --> WB["Existing whole-body controller"]
+    end
+
+    NAV2 --> MUX["Base command manager"]
+    WB --> MUX
+    MUX --> ROBOT["Isaac Sim robot"]
 ```
 
-The MVP currently supports the following end-to-end flow:
+Two control regimes are deliberately separated:
 
-1. Parse a Korean or English Pick & Place command.
-2. Resolve the requested objects and their stored `map`-frame approach poses.
-3. Drive to the Pick workspace with Nav2.
-4. Use current RGB-D perception and the existing whole-body controller to pick.
-5. Drive to the Place workspace when it is external to the Pick workspace.
-6. Refresh perception and complete the existing Place behavior.
+1. **Global approach** — the stored semantic pose guides Nav2 to the correct
+   work area without continuously running object perception.
+2. **Local manipulation** — current RGB-D data refines the object pose and the
+   existing whole-body controller performs the final approach, Pick, and Place.
 
-The Semantic DB is intentionally read-only during the current Isaac Sim MVP.
-Base commands remain arbitrated by `sm_base_control_manager`, so Nav2 and the
-precision manipulation controller do not publish to the robot simultaneously.
+`sm_base_control_manager` remains the only owner of the final `/cmd_vel`
+publication path. Nav2 and manipulation therefore never control the base at the
+same time.
 
-## Packages
+## End-to-end mission
 
-- `sm_bringup`: full-system launch composition and operator entry points.
-- `sm_base_control_manager`: base-command arbitration and final `/cmd_vel`
-  publication.
-- `sm_ee_wholebody_control`: EE-targeted arm/base switching, TF bridges, and
-  whole-body controllers.
-- `sm_florence_2_vlm_ros2`: Florence-2 RGB-D object detection and ROI point
-  cloud generation.
-- `sm_grasping_ros2`: grasp candidate generation, best-pose selection, and
-  RViz gripper markers.
-- `sm_natural_language_task`: natural-language task parsing and interactive
-  task input.
-- `sm_navigation_nav2`: Nav2 launch and configuration ownership.
-- `sm_semantic_map_interfaces`: service contract for semantic object lookup.
-- `sm_semantic_map`: static object database, lookup server, map markers, and
-  position collection/calibration tools.
-- `sm_semantic_mvp`: end-to-end Semantic DB, Nav2, and existing Pick & Place
-  mission orchestration.
-- `sm_task_orchestrator`: Pick/Place phases, navigation handoff, safe retreat,
-  and task-state coordination.
+| Phase | Input | Output |
+|---|---|---|
+| 01 · Parse | `빨간 캔을 분홍 박스에 넣어줘` | `pick=red_can`, `place=pink_box` |
+| 02 · Resolve | Semantic object names | Stored object and approach poses in `map` |
+| 03 · Navigate | Pick approach pose | Nav2 handoff inside the target workspace |
+| 04 · Pick | Fresh RGB-D observation | Existing whole-body pipeline reaches `PICK:HOLD` |
+| 05 · Transfer | Place approach pose | Nav2 reaches the external Place workspace when required |
+| 06 · Place | Refreshed Place observation | Existing Place sequence completes the task |
 
-Research requirements, architecture, experiment, and evidence templates are
-maintained in [`ros2_ws/research-os`](ros2_ws/research-os/README.md).
+The runtime database is intentionally read-only in the current Isaac Sim MVP,
+which keeps demonstrations deterministic after scene reset.
 
-## Build
+## Capability status
+
+| Capability | Status | Notes |
+|---|---|---|
+| Natural-language task parsing | Integrated | Open-vocabulary local LLM path with deterministic rule fallback |
+| Static Semantic DB lookup | Integrated | Six demonstration objects with aliases and approach poses |
+| Fixed-map localization and navigation | Validated MVP | Isaac Sim occupancy map, `map` alignment, and Nav2 goal execution |
+| Dual-camera semantic perception | Integrated | YOLOE prompt, mask color verification, geometry filters, and reliability ranking |
+| Existing whole-body Pick & Place | Preserved | Original local precision behavior remains the manipulation core |
+| Cross-workspace Pick & Place | Integrated | Separate Pick and Place navigation with post-arrival perception refresh |
+| Semantic RViz visualization | Available | Object markers and 2D-map overlay for inspection and demonstrations |
+| Runtime Semantic DB updates | Deferred | Not required while Isaac Sim resets objects to their original poses |
+| Collision-aware arm planning | Planned | cuRobo integration is the next modular extension |
+
+## Quick Start
+
+### 1. Build
 
 ```bash
-cd ros2_ws
+cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --executor sequential --packages-up-to sm_bringup
+colcon build --symlink-install --packages-up-to sm_semantic_mvp
 source install/setup.bash
 ```
 
-Model files and Python virtual environments are not tracked.
+Model files and Python virtual environments are not tracked in Git.
 
-## Semantic DB + Existing Pick & Place
+### 2. Launch the integrated MVP
 
-Start Isaac Sim and press **Play**, then launch the integrated MVP:
+Start Isaac Sim, load the validated scene, and press **Play**. Then run:
 
 ```bash
 cd /home/kiro/Desktop/hw_ws/ros2_ws
 source /opt/ros/humble/setup.bash
 source install/setup.bash
+
 export ROS_DOMAIN_ID=1
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI='<CycloneDDS><Domain><Tracing><Verbosity>severe</Verbosity></Tracing></Domain></CycloneDDS>'
+
 ros2 launch sm_semantic_mvp semantic_db_existing_pick_place.launch.py
 ```
 
-Send a task from another sourced terminal:
+### 3. Submit a mission
+
+In another sourced terminal:
 
 ```bash
 ros2 topic pub --once /natural_language_task std_msgs/msg/String \
   "{data: '빨간 캔을 분홍 박스에 넣어줘'}"
 ```
 
-Monitor the orchestration state with:
+### 4. Observe system state
 
 ```bash
 ros2 topic echo /semantic_mvp/status
@@ -94,51 +160,65 @@ ros2 topic echo /semantic_navigation/status
 ros2 topic echo /pick_place_task_state
 ```
 
-See the [Semantic MVP runbook](ros2_ws/src/sm_semantic_mvp/README.md) and
-[Semantic map documentation](ros2_ws/src/sm_semantic_map/README.md) for the
-detailed sequence and DB inspection commands.
+## Packages
 
-## Existing Pick And Place
+| Layer | Package | Responsibility |
+|---|---|---|
+| System | `sm_bringup` | Full-system launch composition and operator entry points |
+| System | `sm_base_control_manager` | Navigation/manipulation command arbitration and final `/cmd_vel` ownership |
+| Language | `sm_natural_language_task` | Natural-language parsing and interactive task input |
+| Semantic | `sm_semantic_map_interfaces` | Semantic object lookup service contract |
+| Semantic | `sm_semantic_map` | SQLite DB, lookup server, aliases, markers, and calibration tools |
+| Mission | `sm_semantic_mvp` | End-to-end semantic mission composition |
+| Mission | `sm_task_orchestrator` | Task resolution, Nav2 handoff, Pick/Place phases, and recovery coordination |
+| Navigation | `sm_navigation_nav2` | Nav2 launch and configuration ownership |
+| Perception | `sm_florence_2_vlm_ros2` | Dual RGB-D detection, color validation, and ROI point-cloud generation |
+| Grasping | `sm_grasping_ros2` | Grasp candidates, best-pose selection, and RViz markers |
+| Control | `sm_ee_wholebody_control` | End-effector-targeted base/arm switching and whole-body control |
 
-Build the full-system launch and all of its package dependencies after
-changing launch/config/Python files:
+## Repository layout
 
-```bash
-cd /home/kiro/Desktop/hw_ws/ros2_ws
-source /opt/ros/humble/setup.bash
-colcon build --executor sequential --packages-up-to sm_bringup
-source install/setup.bash
+```text
+.
+├── README.md
+├── docs/architecture/       # System visuals
+├── ros2_ws/
+│   ├── maps/                # Fixed occupancy map, Nav2 config, and Semantic DB
+│   ├── research-os/         # Research claims, requirements, evidence, and reports
+│   └── src/                 # Modular ROS 2 packages
+└── map/                     # Source map asset retained for compatibility
 ```
 
-Run the Florence grasp + pick/place task manager:
+## Validation
 
-```bash
-ros2 launch sm_bringup florence_pick_place_control.launch.py \
-  publish_fixed_camera_tf:=false \
-  pick_object:=can \
-  place_object:=box \
-  enable_base_motion:=true \
-  target_parent_frame:=odom
-```
+The `ef0cd70` MVP checkpoint was verified locally with:
 
-Use `place_object:=dish` when placing into the dish. Keep
-`target_parent_frame:=odom` when `enable_base_motion:=true`; this freezes the
-place target in the world/odom frame while the base moves.
+- successful builds for 10 affected ROS 2 packages;
+- 130 passing `colcon` tests and 3 focused interface/freshness tests;
+- a passing Research OS consistency validator; and
+- manual Isaac Sim validation of Semantic DB lookup, Nav2 arrival, and the
+  existing Pick & Place handoff.
 
-Useful tuning arguments:
+This is a research MVP, not a production safety-certified robotics system.
 
-```bash
-grasp_offset_z:=0.03          # pre-grasp height above the grasp target
-grasp_descend_depth:=0.07     # downward pick motion before closing gripper
-place_offset_z:=0.10          # pre-place height above the place target
-place_descend_depth:=0.01     # downward place motion before releasing
-place_offset_x:=0.0           # place target x correction
-place_offset_y:=0.0           # place target y correction
-return_home_after_place:=true # skip vertical retreat and go to safety pose
-```
+## Documentation
 
-To start a task manually instead of autostarting from launch:
+| Document | Purpose |
+|---|---|
+| [Semantic MVP runbook](ros2_ws/src/sm_semantic_mvp/README.md) | Integrated launch, expected sequence, and monitoring topics |
+| [Semantic map guide](ros2_ws/src/sm_semantic_map/README.md) | DB initialization, query, collection, and lookup-only validation |
+| [Pick & Place launch notes](ros2_ws/src/sm_bringup/README_PICK_PLACE.md) | Existing near/long-range modes and controller tuning |
+| [Research OS](ros2_ws/research-os/README.md) | Traceable requirements, decisions, experiments, evidence, and paper assets |
 
-```bash
-ros2 topic pub --once /pick_place_task std_msgs/msg/String "{data: 'can,box'}"
-```
+## Design principles
+
+- **Preserve the validated core.** Semantic modules add memory, lookup, and
+  routing; they do not rewrite the proven manipulation controller.
+- **Keep module contracts explicit.** ROS topics, services, TF frames, and
+  launch boundaries make components replaceable.
+- **Use the cheapest reliable representation.** A static DB and 2D map are
+  sufficient for the current deterministic Isaac Sim scenario.
+- **Refresh only where precision matters.** Map coordinates handle travel;
+  RGB-D perception handles the final object-relative motion.
+- **Validate the full flow continuously.** New planning modules are introduced
+  inside the working end-to-end mission rather than as disconnected demos.
